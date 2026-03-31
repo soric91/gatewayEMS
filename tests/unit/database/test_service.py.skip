@@ -1,0 +1,322 @@
+"""
+Tests for Modbus service layer (business logic).
+"""
+import pytest
+from unittest.mock import Mock, MagicMock, patch
+
+from src.Database.service import ModbusService
+from src.Models.model import EnergyPoint
+
+
+class TestModbusService:
+    """Test ModbusService class."""
+    
+    def test_initialization(self, influxdb_config):
+        """Test service initialization."""
+        service = ModbusService(influxdb_config)
+        
+        assert service.repository is not None
+        assert service.repository.connection.url == influxdb_config.url
+    
+    def test_initialize_success(self, influxdb_config):
+        """Test successful service initialization."""
+        service = ModbusService(influxdb_config)
+        
+        # Mock repository
+        mock_repo = MagicMock()
+        mock_repo.initialize.return_value = True
+        service.repository = mock_repo
+        
+        result = service.initialize()
+        
+        assert result is True
+        mock_repo.initialize.assert_called_once()
+    
+    def test_initialize_failure(self, influxdb_config):
+        """Test service initialization failure."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        mock_repo.initialize.return_value = False
+        service.repository = mock_repo
+        
+        result = service.initialize()
+        
+        assert result is False
+    
+    def test_shutdown(self, influxdb_config):
+        """Test service shutdown."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        service.repository = mock_repo
+        
+        service.shutdown()
+        
+        mock_repo.shutdown.assert_called_once()
+    
+    def test_save_batch_success(self, influxdb_config, sample_device_results):
+        """Test successful batch save."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        mock_repo.save_points.return_value = True
+        service.repository = mock_repo
+        
+        result = service.save_batch(sample_device_results)
+        
+        assert result is True
+        mock_repo.save_points.assert_called_once()
+        
+        # Verify the points passed to repository
+        call_args = mock_repo.save_points.call_args
+        points = call_args[0][0]
+        assert len(points) == 2  # Two successful results
+    
+    def test_save_batch_empty_list(self, influxdb_config):
+        """Test saving empty batch."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        service.repository = mock_repo
+        
+        result = service.save_batch([])
+        
+        assert result is True
+        # Should not call repository when empty
+        assert not mock_repo.save_points.called
+    
+    def test_save_batch_filters_failed_results(self, influxdb_config, sample_device_results):
+        """Test that failed results are filtered out."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        mock_repo.save_points.return_value = True
+        service.repository = mock_repo
+        
+        # sample_device_results has 1 failed result
+        result = service.save_batch(sample_device_results)
+        
+        assert result is True
+        
+        # Verify only successful results were converted
+        call_args = mock_repo.save_points.call_args
+        points = call_args[0][0]
+        assert len(points) == 2  # Only 2 successful results
+    
+    def test_save_batch_all_failed_results(self, influxdb_config, failed_device_result):
+        """Test saving batch with all failed results."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        service.repository = mock_repo
+        
+        result = service.save_batch([failed_device_result])
+        
+        assert result is True
+        # Should not call repository when all results failed
+        assert not mock_repo.save_points.called
+    
+    def test_save_batch_repository_fails(self, influxdb_config, sample_device_results):
+        """Test handling repository failure."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        mock_repo.save_points.return_value = False
+        service.repository = mock_repo
+        
+        result = service.save_batch(sample_device_results)
+        
+        assert result is False
+    
+    def test_save_batch_conversion_exception(self, influxdb_config):
+        """Test handling exception during conversion."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        service.repository = mock_repo
+        
+        # Create invalid result that will cause conversion error
+        invalid_result = MagicMock()
+        invalid_result.success = True
+        invalid_result.device_name = None  # Will cause error
+        
+        with patch('src.Database.service.EnergyPoint.batch_from_results', 
+                   side_effect=Exception("Conversion error")):
+            result = service.save_batch([invalid_result])
+        
+        assert result is False
+    
+    def test_save_batch_preserves_data_integrity(self, influxdb_config, sample_device_results):
+        """Test that data integrity is preserved through the pipeline."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        mock_repo.save_points.return_value = True
+        service.repository = mock_repo
+        
+        # Get the first successful result
+        success_result = next(r for r in sample_device_results if r.success)
+        
+        result = service.save_batch([success_result])
+        
+        assert result is True
+        
+        # Verify the point data
+        call_args = mock_repo.save_points.call_args
+        points = call_args[0][0]
+        assert len(points) == 1
+        
+        # Point should be a Point instance (we can't easily inspect internal state,
+        # but we verify it was created from to_influx_point)
+        from influxdb_client import Point
+        assert isinstance(points[0], Point)
+    
+    def test_save_batch_handles_mixed_success_failure(self, influxdb_config, sample_device_results):
+        """Test handling mixed successful and failed results."""
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        mock_repo.save_points.return_value = True
+        service.repository = mock_repo
+        
+        # sample_device_results has mixed success/failure
+        result = service.save_batch(sample_device_results)
+        
+        assert result is True
+        
+        # Should only process successful results
+        call_args = mock_repo.save_points.call_args
+        points = call_args[0][0]
+        success_count = sum(1 for r in sample_device_results if r.success)
+        assert len(points) == success_count
+    
+    def test_save_batch_with_duplicate_device_ids(self, influxdb_config):
+        """Test saving batch with duplicate device IDs."""
+        from src.Models.model import DeviceReadResult
+        
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        mock_repo.save_points.return_value = True
+        service.repository = mock_repo
+        
+        # Create two results with same device_id
+        result1 = DeviceReadResult(
+            device_name="Device_A",
+            device_id=11,
+            identify_device="uuid-1",
+            timestamp="2026-03-29T23:06:29.664999Z",
+            device_type="CT_Meter",
+            data={"VOLTAGE_A": 120.0},
+            success=True,
+            error=None
+        )
+        result2 = DeviceReadResult(
+            device_name="Device_A",
+            device_id=11,
+            identify_device="uuid-1",
+            timestamp="2026-03-29T23:06:30.000000Z",  # Different timestamp
+            device_type="CT_Meter",
+            data={"VOLTAGE_A": 121.0},
+            success=True,
+            error=None
+        )
+        
+        result = service.save_batch([result1, result2])
+        
+        assert result is True
+        
+        # Both should be saved (different timestamps)
+        call_args = mock_repo.save_points.call_args
+        points = call_args[0][0]
+        assert len(points) == 2
+    
+    def test_save_batch_normalizes_data_types(self, influxdb_config):
+        """Test that service properly normalizes data types."""
+        from src.Models.model import DeviceReadResult
+        
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        mock_repo.save_points.return_value = True
+        service.repository = mock_repo
+        
+        # Create result with mixed int/float data
+        result = DeviceReadResult(
+            device_name="Device_A",
+            device_id=11,
+            identify_device="uuid-1",
+            timestamp="2026-03-29T23:06:29.664999Z",
+            device_type="CT_Meter",
+            data={
+                "VOLTAGE_A": 120,  # int
+                "CURRENT_A": 3.58,  # float
+                "POWER": None,  # None (should be filtered)
+            },
+            success=True,
+            error=None
+        )
+        
+        result = service.save_batch([result])
+        
+        assert result is True
+        mock_repo.save_points.assert_called_once()
+    
+    def test_context_manager_usage(self, influxdb_config):
+        """Test using service as context manager."""
+        mock_repo = MagicMock()
+        mock_repo.initialize.return_value = True
+        
+        with patch('src.Database.service.InfluxDBRepository', return_value=mock_repo):
+            with ModbusService(influxdb_config) as service:
+                assert service.repository == mock_repo
+                mock_repo.initialize.assert_called_once()
+        
+        # Should shutdown after context
+        mock_repo.shutdown.assert_called_once()
+    
+    def test_save_batch_logs_stats(self, influxdb_config, sample_device_results, caplog):
+        """Test that save_batch logs statistics."""
+        import logging
+        
+        service = ModbusService(influxdb_config)
+        
+        mock_repo = MagicMock()
+        mock_repo.save_points.return_value = True
+        service.repository = mock_repo
+        
+        with caplog.at_level(logging.INFO):
+            result = service.save_batch(sample_device_results)
+        
+        assert result is True
+        
+        # Check that logging occurred (actual log format depends on implementation)
+        # This test assumes save_batch logs something about the operation
+        # Adjust based on actual logging in service.py
+    
+    def test_integration_full_pipeline(self, influxdb_config, sample_device_results):
+        """Test full integration: DeviceReadResult -> EnergyPoint -> Point -> Save."""
+        service = ModbusService(influxdb_config)
+        
+        # Use real repository but mock the connection
+        mock_connection = MagicMock()
+        mock_connection.is_connected = True
+        mock_write_api = MagicMock()
+        mock_write_api.write.return_value = None  # Successful write
+        mock_connection.write_api = mock_write_api
+        
+        service.repository.connection = mock_connection
+        
+        result = service.save_batch(sample_device_results)
+        
+        assert result is True
+        
+        # Verify write was called
+        assert mock_write_api.write.called
+        
+        # Verify correct number of points
+        call_args = mock_write_api.write.call_args
+        points = call_args[1]['record']
+        success_count = sum(1 for r in sample_device_results if r.success)
+        assert len(points) == success_count

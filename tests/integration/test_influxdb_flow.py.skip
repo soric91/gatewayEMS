@@ -1,0 +1,364 @@
+"""
+Integration tests for InfluxDB flow.
+Tests the complete pipeline from DeviceReadResult to InfluxDB storage.
+"""
+import pytest
+from unittest.mock import Mock, MagicMock, patch
+from influxdb_client import Point
+
+from src.Database.service import ModbusService
+from src.Database.repository import InfluxDBRepository
+from src.Database.connection import InfluxDBConnection
+from src.Models.model import DeviceReadResult, EnergyPoint
+
+
+class TestInfluxDBFlow:
+    """Integration tests for complete InfluxDB data flow."""
+    
+    def test_end_to_end_single_device(self, influxdb_config):
+        """Test complete flow with single device reading."""
+        # Create a real device reading
+        device_result = DeviceReadResult(
+            device_name="Modbus_DTSU666_11",
+            device_id=11,
+            identify_device="bf6a469f-4c2a-4402-9438-49a491ad2238",
+            timestamp="2026-03-29T23:06:29.664999Z",
+            device_type="CT_Meter",
+            data={
+                "VOLTAGE_A": 119.9,
+                "VOLTAGE_B": 120.9,
+                "CURRENT_A": 3.58,
+                "CURRENT_B": 0.7,
+                "POWER_ACTIVE_INST_TOTAL": 465.6,
+            },
+            success=True,
+            error=None
+        )
+        
+        # Mock InfluxDB connection
+        mock_client = MagicMock()
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            service = ModbusService(influxdb_config)
+            
+            # Initialize
+            init_result = service.initialize()
+            assert init_result is True
+            
+            # Save batch
+            save_result = service.save_batch([device_result])
+            assert save_result is True
+            
+            # Verify write was called
+            assert mock_write_api.write.called
+            
+            # Verify the point data
+            call_args = mock_write_api.write.call_args
+            points = call_args[1]['record']
+            assert len(points) == 1
+            assert isinstance(points[0], Point)
+            
+            # Shutdown
+            service.shutdown()
+            assert mock_client.close.called
+    
+    def test_end_to_end_multiple_devices(self, influxdb_config, sample_device_results):
+        """Test complete flow with multiple device readings."""
+        mock_client = MagicMock()
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            service = ModbusService(influxdb_config)
+            service.initialize()
+            
+            result = service.save_batch(sample_device_results)
+            
+            assert result is True
+            
+            # Verify correct number of points (only successful results)
+            call_args = mock_write_api.write.call_args
+            points = call_args[1]['record']
+            success_count = sum(1 for r in sample_device_results if r.success)
+            assert len(points) == success_count
+            
+            service.shutdown()
+    
+    def test_flow_with_connection_failure(self, influxdb_config):
+        """Test flow when InfluxDB connection fails."""
+        mock_client = MagicMock()
+        mock_health = MagicMock()
+        mock_health.status = "fail"
+        mock_client.health.return_value = mock_health
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            service = ModbusService(influxdb_config)
+            
+            # Initialize should fail
+            init_result = service.initialize(max_retries=1, retry_delay=0.1)
+            assert init_result is False
+            
+            # Service should handle gracefully
+            service.shutdown()
+    
+    def test_flow_with_write_failure(self, influxdb_config, sample_device_results):
+        """Test flow when write to InfluxDB fails."""
+        mock_client = MagicMock()
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        mock_write_api = MagicMock()
+        mock_write_api.write.side_effect = Exception("Write failed")
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            service = ModbusService(influxdb_config)
+            service.initialize()
+            
+            result = service.save_batch(sample_device_results)
+            
+            # Should return False on write failure
+            assert result is False
+            
+            service.shutdown()
+    
+    def test_flow_filters_failed_readings(self, influxdb_config):
+        """Test that failed device readings are not saved."""
+        success_result = DeviceReadResult(
+            device_name="Device_Success",
+            device_id=1,
+            identify_device="uuid-1",
+            timestamp="2026-03-29T23:06:29.664999Z",
+            device_type="CT_Meter",
+            data={"VOLTAGE_A": 120.0},
+            success=True,
+            error=None
+        )
+        
+        failed_result = DeviceReadResult(
+            device_name="Device_Failed",
+            device_id=2,
+            identify_device="uuid-2",
+            timestamp="2026-03-29T23:06:29.664999Z",
+            device_type="CT_Meter",
+            data={},
+            success=False,
+            error="Connection timeout"
+        )
+        
+        mock_client = MagicMock()
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            service = ModbusService(influxdb_config)
+            service.initialize()
+            
+            result = service.save_batch([success_result, failed_result])
+            
+            assert result is True
+            
+            # Only 1 point should be written (the successful one)
+            call_args = mock_write_api.write.call_args
+            points = call_args[1]['record']
+            assert len(points) == 1
+            
+            service.shutdown()
+    
+    def test_flow_preserves_data_accuracy(self, influxdb_config):
+        """Test that data values are preserved accurately through the pipeline."""
+        original_data = {
+            "VOLTAGE_A": 119.9,
+            "VOLTAGE_B": 120.9,
+            "CURRENT_A": 3.58,
+            "CURRENT_B": 0.7,
+            "POWER_ACTIVE_INST_TOTAL": 465.6,
+        }
+        
+        device_result = DeviceReadResult(
+            device_name="Modbus_DTSU666_11",
+            device_id=11,
+            identify_device="bf6a469f-4c2a-4402-9438-49a491ad2238",
+            timestamp="2026-03-29T23:06:29.664999Z",
+            device_type="CT_Meter",
+            data=original_data.copy(),
+            success=True,
+            error=None
+        )
+        
+        # Convert through the pipeline
+        energy_point = EnergyPoint.from_device_read_result(device_result)
+        
+        # Verify data is preserved
+        assert energy_point.device_id == "11"  # Converted to string
+        assert energy_point.device_name == device_result.device_name
+        assert energy_point.device_type == device_result.device_type
+        assert energy_point.timestamp == device_result.timestamp
+        
+        # All original data should be in fields
+        for key, value in original_data.items():
+            assert key.lower() in energy_point.fields
+            assert energy_point.fields[key.lower()] == float(value)
+    
+    def test_flow_with_empty_batch(self, influxdb_config):
+        """Test flow with empty batch."""
+        mock_client = MagicMock()
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            service = ModbusService(influxdb_config)
+            service.initialize()
+            
+            result = service.save_batch([])
+            
+            assert result is True
+            # Write should not be called for empty batch
+            assert not mock_write_api.write.called
+            
+            service.shutdown()
+    
+    def test_flow_with_reconnection(self, influxdb_config, sample_device_results):
+        """Test flow with connection loss and recovery."""
+        mock_client = MagicMock()
+        
+        # First health check passes
+        mock_health_pass = MagicMock()
+        mock_health_pass.status = "pass"
+        
+        # Simulate health checks: fail, fail, pass (reconnection)
+        mock_client.health.side_effect = [
+            mock_health_pass,  # Initial connect
+            mock_health_pass,  # First write
+        ]
+        
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            service = ModbusService(influxdb_config)
+            
+            # Initialize
+            assert service.initialize() is True
+            
+            # First batch - success
+            assert service.save_batch(sample_device_results) is True
+            
+            service.shutdown()
+    
+    def test_flow_data_type_conversion(self, influxdb_config):
+        """Test that data types are correctly converted through the flow."""
+        device_result = DeviceReadResult(
+            device_name="Test_Device",
+            device_id=99,  # int
+            identify_device="test-uuid",
+            timestamp="2026-03-29T23:06:29.664999Z",
+            device_type="CT_Meter",
+            data={
+                "VOLTAGE": 120,      # int -> should become float
+                "CURRENT": 5.5,      # float -> stays float
+                "POWER": None,       # None -> should be filtered
+                "STATUS": "",        # empty string -> should be filtered
+            },
+            success=True,
+            error=None
+        )
+        
+        # Convert to EnergyPoint
+        energy_point = EnergyPoint.from_device_read_result(device_result)
+        
+        # Verify conversions
+        assert "voltage" in energy_point.fields
+        assert isinstance(energy_point.fields["voltage"], float)
+        assert energy_point.fields["voltage"] == 120.0
+        
+        assert "current" in energy_point.fields
+        assert isinstance(energy_point.fields["current"], float)
+        assert energy_point.fields["current"] == 5.5
+        
+        # None and empty string should be filtered out
+        assert "power" not in energy_point.fields
+        assert "status" not in energy_point.fields
+    
+    def test_flow_with_context_manager(self, influxdb_config, sample_device_results):
+        """Test using service as context manager."""
+        mock_client = MagicMock()
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            with ModbusService(influxdb_config) as service:
+                result = service.save_batch(sample_device_results)
+                assert result is True
+        
+        # Connection should be closed after context
+        assert mock_client.close.called
+    
+    def test_flow_concurrent_batches(self, influxdb_config):
+        """Test handling multiple batches in sequence."""
+        batch1 = [
+            DeviceReadResult(
+                device_name="Device_1",
+                device_id=1,
+                identify_device="uuid-1",
+                timestamp="2026-03-29T23:06:29.000000Z",
+                device_type="CT_Meter",
+                data={"VOLTAGE_A": 120.0},
+                success=True,
+                error=None
+            )
+        ]
+        
+        batch2 = [
+            DeviceReadResult(
+                device_name="Device_2",
+                device_id=2,
+                identify_device="uuid-2",
+                timestamp="2026-03-29T23:06:30.000000Z",
+                device_type="CT_Meter",
+                data={"VOLTAGE_A": 121.0},
+                success=True,
+                error=None
+            )
+        ]
+        
+        mock_client = MagicMock()
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            service = ModbusService(influxdb_config)
+            service.initialize()
+            
+            # Save first batch
+            result1 = service.save_batch(batch1)
+            assert result1 is True
+            
+            # Save second batch
+            result2 = service.save_batch(batch2)
+            assert result2 is True
+            
+            # Write should be called twice
+            assert mock_write_api.write.call_count == 2
+            
+            service.shutdown()

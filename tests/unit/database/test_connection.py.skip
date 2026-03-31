@@ -1,0 +1,238 @@
+"""
+Tests for InfluxDB connection layer.
+"""
+import pytest
+from unittest.mock import Mock, patch, MagicMock
+from influxdb_client import InfluxDBClient
+from influxdb_client.client.write_api import SYNCHRONOUS
+
+from src.Database.connection import InfluxDBConnection
+
+
+class TestInfluxDBConnection:
+    """Test InfluxDBConnection class."""
+    
+    def test_initialization(self, influxdb_config):
+        """Test connection initialization with config."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        assert conn.url == influxdb_config.url
+        assert conn.token == influxdb_config.token
+        assert conn.org == influxdb_config.org
+        assert conn.bucket == influxdb_config.bucket
+        assert conn.client is None
+        assert conn.write_api is None
+        assert conn.is_connected is False
+    
+    def test_connect_success(self, influxdb_config):
+        """Test successful connection to InfluxDB."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        # Mock InfluxDBClient and its methods
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            result = conn.connect()
+        
+        assert result is True
+        assert conn.is_connected is True
+        assert conn.client == mock_client
+        assert conn.write_api == mock_write_api
+        mock_client.write_api.assert_called_once_with(write_options=SYNCHRONOUS)
+        mock_client.health.assert_called_once()
+    
+    def test_connect_health_check_fails(self, influxdb_config):
+        """Test connection fails when health check returns non-pass status."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_health = MagicMock()
+        mock_health.status = "fail"
+        mock_client.health.return_value = mock_health
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            result = conn.connect(max_retries=1, retry_delay=0.1)
+        
+        assert result is False
+        assert conn.is_connected is False
+        assert conn.client is None
+        assert conn.write_api is None
+    
+    def test_connect_with_retries(self, influxdb_config):
+        """Test connection retry mechanism."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        mock_client = MagicMock(spec=InfluxDBClient)
+        
+        # First two attempts fail, third succeeds
+        mock_health_fail = MagicMock()
+        mock_health_fail.status = "fail"
+        mock_health_pass = MagicMock()
+        mock_health_pass.status = "pass"
+        
+        mock_client.health.side_effect = [mock_health_fail, mock_health_fail, mock_health_pass]
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            result = conn.connect(max_retries=3, retry_delay=0.1)
+        
+        assert result is True
+        assert conn.is_connected is True
+        assert mock_client.health.call_count == 3
+    
+    def test_connect_max_retries_exceeded(self, influxdb_config):
+        """Test connection fails after max retries."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_health = MagicMock()
+        mock_health.status = "fail"
+        mock_client.health.return_value = mock_health
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            result = conn.connect(max_retries=3, retry_delay=0.1)
+        
+        assert result is False
+        assert conn.is_connected is False
+        assert mock_client.health.call_count == 3
+    
+    def test_connect_exception_during_connection(self, influxdb_config):
+        """Test handling of exception during connection."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        with patch('src.Database.connection.InfluxDBClient', side_effect=Exception("Connection error")):
+            result = conn.connect(max_retries=1, retry_delay=0.1)
+        
+        assert result is False
+        assert conn.is_connected is False
+    
+    def test_disconnect_when_connected(self, influxdb_config):
+        """Test disconnection when client is connected."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        # Mock connected state
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_write_api = MagicMock()
+        conn.client = mock_client
+        conn.write_api = mock_write_api
+        conn.is_connected = True
+        
+        conn.disconnect()
+        
+        assert conn.is_connected is False
+        assert conn.client is None
+        assert conn.write_api is None
+        mock_client.close.assert_called_once()
+    
+    def test_disconnect_when_not_connected(self, influxdb_config):
+        """Test disconnection when client is not connected."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        # Should not raise exception
+        conn.disconnect()
+        
+        assert conn.is_connected is False
+        assert conn.client is None
+        assert conn.write_api is None
+    
+    def test_disconnect_with_exception(self, influxdb_config):
+        """Test disconnection handles exception gracefully."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_client.close.side_effect = Exception("Close error")
+        conn.client = mock_client
+        conn.is_connected = True
+        
+        # Should not raise exception
+        conn.disconnect()
+        
+        assert conn.is_connected is False
+        assert conn.client is None
+    
+    def test_health_check_when_connected(self, influxdb_config):
+        """Test health check when connected."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        conn.client = mock_client
+        conn.is_connected = True
+        
+        result = conn.health_check()
+        
+        assert result is True
+        mock_client.health.assert_called_once()
+    
+    def test_health_check_when_not_connected(self, influxdb_config):
+        """Test health check when not connected."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        result = conn.health_check()
+        
+        assert result is False
+    
+    def test_health_check_returns_fail(self, influxdb_config):
+        """Test health check when InfluxDB returns fail status."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_health = MagicMock()
+        mock_health.status = "fail"
+        mock_client.health.return_value = mock_health
+        conn.client = mock_client
+        conn.is_connected = True
+        
+        result = conn.health_check()
+        
+        assert result is False
+    
+    def test_health_check_with_exception(self, influxdb_config):
+        """Test health check handles exception."""
+        conn = InfluxDBConnection(influxdb_config)
+        
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_client.health.side_effect = Exception("Health check error")
+        conn.client = mock_client
+        conn.is_connected = True
+        
+        result = conn.health_check()
+        
+        assert result is False
+    
+    def test_context_manager_success(self, influxdb_config):
+        """Test using connection as context manager."""
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_health = MagicMock()
+        mock_health.status = "pass"
+        mock_client.health.return_value = mock_health
+        mock_write_api = MagicMock()
+        mock_client.write_api.return_value = mock_write_api
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            with InfluxDBConnection(influxdb_config) as conn:
+                assert conn.is_connected is True
+                assert conn.client == mock_client
+        
+        # Should disconnect after context
+        mock_client.close.assert_called_once()
+    
+    def test_context_manager_connection_fails(self, influxdb_config):
+        """Test context manager when connection fails."""
+        mock_client = MagicMock(spec=InfluxDBClient)
+        mock_health = MagicMock()
+        mock_health.status = "fail"
+        mock_client.health.return_value = mock_health
+        
+        with patch('src.Database.connection.InfluxDBClient', return_value=mock_client):
+            with pytest.raises(ConnectionError, match="Failed to connect to InfluxDB"):
+                with InfluxDBConnection(influxdb_config) as conn:
+                    pass

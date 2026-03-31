@@ -1,0 +1,127 @@
+# ============================================
+# Python - Archivos generados
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ============================================
+# Virtual Environments
+# ============================================
+.venv/
+venv/
+ENV/
+env/
+.virtualenv/
+
+# ============================================
+# IDE / Editors
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ============================================
+# Testing y Coverage
+# ============================================
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+.mypy_cache/
+.pytype/
+cov.xml
+*.cover
+.hypothesis/
+
+# Archivos de testing temporal
+PYTEST_RESUMEN.txt
+PYTEST_SETUP.md
+TEST_RESULTS.txt
+CODE_REVIEW_UPDATED.md
+CODE_REVIEW.txt
+test_output.txt
+test.py
+
+# ============================================
+# Environment Variables (CRÍTICO - NO SUBIR)
+# ============================================
+.env
+.env.*
+*.env
+!.env.example
+env.local
+.envrc
+
+# ============================================
+# Docker - Datos persistentes
+# ============================================
+data/
+influxdb-data/
+influxdb-config/
+backups/
+*.backup
+*.backup.*
+volumes/
+
+# ============================================
+# Logs
+# ============================================
+logs/
+*.log
+src/Log/*.log
+*.log.*
+
+# ============================================
+# Archivos temporales
+# ============================================
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+
+# ============================================
+# Scripts privados (comentar si quieres incluirlos)
+# ============================================
+scripts/
+/scripts/
+
+# ============================================
+# Sistema Operativo
+# ============================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================
+# Archivos específicos del proyecto
+# ============================================
+# Descomentar si NO quieres subir Dockerfile
+# Dockerfile
+# docker-compose.yml
+
+GITHUB_CHECKLIST.md

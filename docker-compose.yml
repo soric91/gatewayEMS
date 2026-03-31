@@ -1,0 +1,53 @@
+
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: gateway_ems_influxdb
+    restart: always  
+    
+    ports:
+      - "8086:8086"  
+   
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    
+    volumes:
+      - ./data/influxdb:/var/lib/influxdb2
+      - ./data/influxdb-config:/etc/influxdb2
+      - ./backups:/backups
+    
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_ADMIN_USER:-admin}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_ADMIN_PASSWORD:-gateway_ems_2024}
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG:-gateway_ems}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET:-modbus_data}
+      - DOCKER_INFLUXDB_INIT_RETENTION=${INFLUXDB_RETENTION:-90d}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN:-token_gateway_ems_produccion_local_12345}
+    
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    
+    networks:
+      - gateway_network
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+networks:
+  gateway_network:
+    driver: bridge

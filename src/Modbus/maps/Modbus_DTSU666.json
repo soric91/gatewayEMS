@@ -1,0 +1,90 @@
+{
+    "VOLTAGE_A": {
+
+      "address": "0x2006",
+
+      "data_type": "f",
+
+      "gain": "1"
+
+    },
+
+    "VOLTAGE_B": {
+
+        "address": "0x2008",
+
+        "data_type": "f",
+
+        "gain": "1"
+
+    },
+
+    "CURRENT_A": {
+
+      "address": "0x200C",
+
+      "data_type": "f",
+
+      "gain": "1"
+
+    },
+
+    "CURRENT_B": {
+
+        "address": "0x200E",
+
+        "data_type": "f",
+
+        "gain": "1"
+
+    },
+
+    "POWER_ACTIVE_INST_TOTAL": {
+
+      "address": "0x2012",
+
+      "data_type": "f",
+
+      "gain": "1"
+
+    },
+
+
+    "POWER_ACTIVE_INST_A": {
+
+      "address": "0x2014",
+
+      "data_type": "f",
+
+      "gain": "1"
+
+    },
+
+    "POWER_ACTIVE_INST_B": {
+
+      "address": "0x2016",
+
+      "data_type": "f",
+
+      "gain": "1"
+
+    },
+    "POWER_ACTIVE_TOTAL_POS": {
+
+      "address": "0x4026",
+
+      "data_type": "f",
+
+      "gain": "1"
+
+    },
+    "POWER_ACTIVE_TOTAL_NEG": {
+
+      "address": "0x4030",
+
+      "data_type": "f",
+
+      "gain": "1"
+
+    }
+  }

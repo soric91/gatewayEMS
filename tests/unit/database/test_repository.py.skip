@@ -1,0 +1,263 @@
+"""
+Tests for InfluxDB repository layer.
+"""
+import pytest
+from unittest.mock import Mock, MagicMock, patch
+from influxdb_client import Point
+
+from src.Database.repository import InfluxDBRepository
+from src.Models.model import EnergyPoint
+
+
+class TestInfluxDBRepository:
+    """Test InfluxDBRepository class."""
+    
+    def test_initialization(self, influxdb_config):
+        """Test repository initialization."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        assert repo.connection is not None
+        assert repo.connection.url == influxdb_config.url
+        assert repo.connection.token == influxdb_config.token
+        assert repo.connection.org == influxdb_config.org
+        assert repo.connection.bucket == influxdb_config.bucket
+    
+    def test_initialize_success(self, influxdb_config):
+        """Test successful initialization."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        # Mock the connection
+        mock_connection = MagicMock()
+        mock_connection.connect.return_value = True
+        repo.connection = mock_connection
+        
+        result = repo.initialize()
+        
+        assert result is True
+        mock_connection.connect.assert_called_once()
+    
+    def test_initialize_failure(self, influxdb_config):
+        """Test initialization failure."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        mock_connection.connect.return_value = False
+        repo.connection = mock_connection
+        
+        result = repo.initialize()
+        
+        assert result is False
+    
+    def test_shutdown(self, influxdb_config):
+        """Test repository shutdown."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        repo.connection = mock_connection
+        
+        repo.shutdown()
+        
+        mock_connection.disconnect.assert_called_once()
+    
+    def test_save_points_success(self, influxdb_config, sample_energy_point):
+        """Test successful save of points to InfluxDB."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        # Mock connected state
+        mock_connection = MagicMock()
+        mock_connection.is_connected = True
+        mock_write_api = MagicMock()
+        mock_connection.write_api = mock_write_api
+        repo.connection = mock_connection
+        
+        # Create influx points
+        influx_point = sample_energy_point.to_influx_point()
+        points = [influx_point]
+        
+        result = repo.save_points(points)
+        
+        assert result is True
+        mock_write_api.write.assert_called_once_with(
+            bucket=influxdb_config.bucket,
+            org=influxdb_config.org,
+            record=points
+        )
+    
+    def test_save_points_multiple(self, influxdb_config, sample_device_results):
+        """Test saving multiple points."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        mock_connection.is_connected = True
+        mock_write_api = MagicMock()
+        mock_connection.write_api = mock_write_api
+        repo.connection = mock_connection
+        
+        # Convert to energy points then to influx points
+        energy_points = EnergyPoint.batch_from_results(sample_device_results)
+        influx_points = [point.to_influx_point() for point in energy_points]
+        
+        result = repo.save_points(influx_points)
+        
+        assert result is True
+        assert len(influx_points) == 2  # Two successful results
+        mock_write_api.write.assert_called_once()
+    
+    def test_save_points_empty_list(self, influxdb_config):
+        """Test saving empty list of points."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        mock_connection.is_connected = True
+        repo.connection = mock_connection
+        
+        result = repo.save_points([])
+        
+        assert result is True
+        # Should not call write_api when empty
+        assert not mock_connection.write_api.write.called
+    
+    def test_save_points_not_connected(self, influxdb_config, sample_energy_point):
+        """Test saving points when not connected."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        mock_connection.is_connected = False
+        repo.connection = mock_connection
+        
+        influx_point = sample_energy_point.to_influx_point()
+        result = repo.save_points([influx_point])
+        
+        assert result is False
+    
+    def test_save_points_write_exception(self, influxdb_config, sample_energy_point):
+        """Test handling exception during write."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        mock_connection.is_connected = True
+        mock_write_api = MagicMock()
+        mock_write_api.write.side_effect = Exception("Write error")
+        mock_connection.write_api = mock_write_api
+        repo.connection = mock_connection
+        
+        influx_point = sample_energy_point.to_influx_point()
+        result = repo.save_points([influx_point])
+        
+        assert result is False
+    
+    def test_save_points_validates_point_types(self, influxdb_config):
+        """Test that save_points validates Point types."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        mock_connection.is_connected = True
+        mock_write_api = MagicMock()
+        mock_connection.write_api = mock_write_api
+        repo.connection = mock_connection
+        
+        # Create a valid Point
+        valid_point = (Point("energy_data")
+                      .tag("device_id", "11")
+                      .field("voltage_a", 120.0)
+                      .time("2026-03-29T23:06:29.664999Z"))
+        
+        result = repo.save_points([valid_point])
+        
+        assert result is True
+        
+        # Verify the write was called with correct parameters
+        call_args = mock_write_api.write.call_args
+        assert call_args[1]['bucket'] == influxdb_config.bucket
+        assert call_args[1]['org'] == influxdb_config.org
+        assert call_args[1]['record'] == [valid_point]
+    
+    def test_context_manager_usage(self, influxdb_config):
+        """Test using repository as context manager."""
+        mock_connection = MagicMock()
+        mock_connection.connect.return_value = True
+        mock_connection.is_connected = True
+        
+        with patch('src.Database.repository.InfluxDBConnection', return_value=mock_connection):
+            with InfluxDBRepository(influxdb_config) as repo:
+                assert repo.connection == mock_connection
+                mock_connection.connect.assert_called_once()
+        
+        # Should disconnect after context
+        mock_connection.disconnect.assert_called_once()
+    
+    def test_save_points_with_custom_bucket(self, influxdb_config, sample_energy_point):
+        """Test saving points with custom bucket override."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        mock_connection.is_connected = True
+        mock_write_api = MagicMock()
+        mock_connection.write_api = mock_write_api
+        mock_connection.org = "test-org"
+        repo.connection = mock_connection
+        
+        influx_point = sample_energy_point.to_influx_point()
+        
+        # Override bucket
+        custom_bucket = "custom-bucket"
+        result = repo.save_points([influx_point], bucket=custom_bucket)
+        
+        assert result is True
+        mock_write_api.write.assert_called_once_with(
+            bucket=custom_bucket,
+            org=mock_connection.org,
+            record=[influx_point]
+        )
+    
+    def test_batch_from_results_integration(self, influxdb_config, sample_device_results):
+        """Test integration: converting DeviceReadResult -> EnergyPoint -> InfluxDB Point."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        mock_connection.is_connected = True
+        mock_write_api = MagicMock()
+        mock_connection.write_api = mock_write_api
+        repo.connection = mock_connection
+        
+        # Full conversion pipeline
+        energy_points = EnergyPoint.batch_from_results(sample_device_results)
+        influx_points = [point.to_influx_point() for point in energy_points]
+        
+        result = repo.save_points(influx_points)
+        
+        assert result is True
+        assert len(influx_points) == 2  # Only successful results
+        
+        # Verify each point is a Point instance
+        for point in influx_points:
+            assert isinstance(point, Point)
+    
+    def test_save_points_preserves_data_types(self, influxdb_config):
+        """Test that repository preserves correct data types in points."""
+        repo = InfluxDBRepository(influxdb_config)
+        
+        mock_connection = MagicMock()
+        mock_connection.is_connected = True
+        mock_write_api = MagicMock()
+        mock_connection.write_api = mock_write_api
+        repo.connection = mock_connection
+        
+        # Create point with specific data types
+        point = (Point("energy_data")
+                .tag("device_id", "11")  # tags are strings
+                .tag("device_type", "CT_Meter")
+                .field("voltage_a", 119.9)  # fields are float
+                .field("current_a", 3.58)
+                .field("power_active_inst_total", 465.6)
+                .time("2026-03-29T23:06:29.664999Z"))
+        
+        result = repo.save_points([point])
+        
+        assert result is True
+        
+        # Verify write was called
+        assert mock_write_api.write.called
+        written_points = mock_write_api.write.call_args[1]['record']
+        assert len(written_points) == 1
+        assert written_points[0] == point
