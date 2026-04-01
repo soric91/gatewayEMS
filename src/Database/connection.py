@@ -14,12 +14,13 @@ logger = get_logger(__name__)
 class InfluxDBConnection:
     settings: Settings = field(default_factory=get_settings)
 
-    bucket: str = field(init=False)
-    org: str = field(init=False)
+    bucket: str = field(init=False, default="")
+    org: str = field(init=False, default="")
 
     _client: Optional[InfluxDBClient] = None
     _write_api: Optional[InfluxDBClient.write_api] = None
     _connected: bool = False
+    _influxdb_enabled: bool = field(init=False, default=False)
     
     _max_retries: int = 3
     _retry_delay: int = 3  
@@ -27,7 +28,19 @@ class InfluxDBConnection:
     _timeout: int = 10
 
     def __post_init__(self):
-        self._client = InfluxDBClient(url=self.settings.INFLUXDB_URL, token=self.settings.INFLUXDB_TOKEN, org=self.settings.INFLUXDB_ORG, timeout=self._timeout * 1000)
+        # Verificar si InfluxDB está configurado
+        if not self.settings.is_influxdb_configured():
+            logger.warning("⚠️ InfluxDB no está configurado. El sistema funcionará sin persistencia de datos.")
+            self._influxdb_enabled = False
+            return
+        
+        self._influxdb_enabled = True
+        self._client = InfluxDBClient(
+            url=self.settings.INFLUXDB_URL, 
+            token=self.settings.INFLUXDB_TOKEN, 
+            org=self.settings.INFLUXDB_ORG, 
+            timeout=self._timeout * 1000
+        )
         logger.info("InfluxDB client initialized successfully.")
         self.bucket = self.settings.INFLUXDB_BUCKET    
         self.org = self.settings.INFLUXDB_ORG
@@ -37,8 +50,12 @@ class InfluxDBConnection:
         Conecta a InfluxDB con retry automático.
         
         Returns:
-            bool: True si conexión exitosa
+            bool: True si conexión exitosa o si InfluxDB está deshabilitado
         """
+        if not self._influxdb_enabled:
+            logger.info("ℹ️ InfluxDB deshabilitado, saltando conexión")
+            return True
+            
         retries = 0
         while retries < self._max_retries:
             try:
@@ -70,6 +87,9 @@ class InfluxDBConnection:
         Returns:
             bool: True si saludable
         """
+        if not self._influxdb_enabled or not self._client:
+            return False
+            
         try:
             # Usar ping() en lugar de health() (deprecated)
             health = self._client.ping()
@@ -96,6 +116,10 @@ class InfluxDBConnection:
         """Verifica si está conectado"""
         return self._connected
     
+    def is_enabled(self) -> bool:
+        """Verifica si InfluxDB está habilitado"""
+        return self._influxdb_enabled
+    
     def get_client(self) -> Optional[InfluxDBClient]:
         """Retorna el cliente InfluxDB"""
         return self._client
@@ -111,6 +135,9 @@ class InfluxDBConnection:
         Returns:
             bool: True si conectado
         """
+        if not self._influxdb_enabled:
+            return True
+            
         if not self._connected:
             logger.info("Conexión perdida, reconectando...")
             return await self.connect()

@@ -132,9 +132,17 @@ class TaskManager(BaseWatchdog):
           
             self.modbus_app = ModbusApp(self.config)
             
+            # Intentar inicializar ModbusService (InfluxDB)
             if self.modbus_service is None:
                 self.modbus_service = ModbusService()
-            await self.modbus_service.initialize()
+            
+            try:
+                await self.modbus_service.initialize()
+                logger.info("✅ ModbusService inicializado con InfluxDB")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo conectar a InfluxDB: {e}")
+                logger.warning("⚠️ Sistema continuará sin guardado en InfluxDB")
+                # Continuar sin InfluxDB
 
             if not self.modbus_app._load_configs():
                 logger.error("❌ No se pudo cargar configs")
@@ -159,8 +167,6 @@ class TaskManager(BaseWatchdog):
             
         except Exception as e:
             logger.exception(f"❌ Error inicializando TaskManager: {e}")
-            logger.error(f"❌ Error conectando a InfluxDB: {e}")
-            logger.warning("⚠️ Sistema continuará sin guardado en InfluxDB")
             return False
     
     
