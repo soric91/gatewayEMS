@@ -1,6 +1,6 @@
 from src.Database.repository import InfluxDBRepository
 from dataclasses import dataclass, field
-from typing import  List
+from typing import  List, Optional
 from src.Models.model import EnergyPoint, DeviceReadResult
 from src.Utils.logging import get_logger
 
