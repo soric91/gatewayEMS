@@ -20,8 +20,12 @@ class ModbusService:
     NO sabe cómo se leen los registros Modbus (eso es otra capa).
     """
     
-    _repository: InfluxDBRepository = field(default_factory=InfluxDBRepository)
+    _repository: Optional[InfluxDBRepository] = None
     _initialized: bool = field(default=False, init=False)
+    
+    def __post_init__(self):
+        if self._repository is None:
+            self._repository = InfluxDBRepository()
     
     async def initialize(self) -> None:
         """

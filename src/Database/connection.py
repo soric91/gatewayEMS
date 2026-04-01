@@ -3,7 +3,7 @@ import asyncio
 from typing import Optional
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
-from src.Core.config import get_settings, Settings
+from src.Core.config import get_settings
 from src.Utils.logging import get_logger
 from dataclasses import dataclass, field
 
