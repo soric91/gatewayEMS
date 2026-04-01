@@ -46,8 +46,6 @@ class TaskManager(BaseWatchdog):
     def __post_init__(self):
         """Carga configuración inicial"""
         
-        if self.modbus_service is None:
-            self.modbus_service = ModbusService()
 
         BaseWatchdog.__init__(self, poll_interval=2.0)
         
@@ -134,7 +132,8 @@ class TaskManager(BaseWatchdog):
           
             self.modbus_app = ModbusApp(self.config)
             
-            
+            if self.modbus_service is None:
+                self.modbus_service = ModbusService()
             await self.modbus_service.initialize()
 
             if not self.modbus_app._load_configs():
