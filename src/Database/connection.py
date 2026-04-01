@@ -3,19 +3,20 @@ import asyncio
 from typing import Optional
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
-from src.Core.config import settings
+from src.Core.config import get_settings, Settings
 from src.Utils.logging import get_logger
 from dataclasses import dataclass, field
 
 logger = get_logger(__name__)
 
+
 @dataclass
 class InfluxDBConnection:
-    _token: str = field(default_factory=lambda: settings.INFLUXDB_TOKEN)
-    org: str = field(default_factory=lambda: settings.INFLUXDB_ORG)
-    bucket: str = field(default_factory=lambda: settings.INFLUXDB_BUCKET)
-    _retention: str = field(default_factory=lambda: settings.INFLUXDB_RETENTION)
-    _url: str = field(default_factory=lambda: settings.INFLUXDB_URL)
+    settings: Settings = field(default_factory=get_settings)
+
+    bucket: str = field(init=False)
+    org: str = field(init=False)
+
     _client: Optional[InfluxDBClient] = None
     _write_api: Optional[InfluxDBClient.write_api] = None
     _connected: bool = False
@@ -26,9 +27,10 @@ class InfluxDBConnection:
     _timeout: int = 10
 
     def __post_init__(self):
-        self._client = InfluxDBClient(url=self._url, token=self._token, org=self.org, timeout=self._timeout * 1000)
-        logger.info("InfluxDB client initialized successfully.")    
-        
+        self._client = InfluxDBClient(url=self.settings.INFLUXDB_URL, token=self.settings.INFLUXDB_TOKEN, org=self.settings.INFLUXDB_ORG, timeout=self._timeout * 1000)
+        logger.info("InfluxDB client initialized successfully.")
+        self.bucket = self.settings.INFLUXDB_BUCKET    
+        self.org = self.settings.INFLUXDB_ORG
         
     async def connect(self)-> bool:
         """

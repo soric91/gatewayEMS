@@ -1,7 +1,6 @@
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from urllib.parse import quote_plus
-
+from functools import lru_cache
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -18,4 +17,6 @@ class Settings(BaseSettings):
     INFLUXDB_RETENTION: str
     INFLUXDB_URL: str
     
-settings = Settings()
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings()
