@@ -23,6 +23,7 @@ _ENV_DEFAULTS = {
     "MQTT_TOPIC_CRM": "crm/gateway/",
     "MQTT_QOS": "1",
     "MQTT_CLIENT_ID": "gateway-ems-test",
+    "GATEWAY_UUID": "00000000-0000-0000-0000-000000000000",
 }
 
 for _key, _value in _ENV_DEFAULTS.items():

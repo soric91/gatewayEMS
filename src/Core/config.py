@@ -26,5 +26,6 @@ class Settings(BaseSettings):
     MQTT_TOPIC_CRM: str
     MQTT_QOS: int
     MQTT_CLIENT_ID: str
-    
+    GATEWAY_UUID: str
+
 settings = Settings()
