@@ -125,3 +125,8 @@ desktop.ini
 # docker-compose.yml
 
 GITHUB_CHECKLIST.md
+
+# Configuración operativa del gateway: propia de cada equipo y reescrita en
+# runtime por el watchdog. Se versiona la plantilla, no el estado.
+src/Config/config.ini
+!src/Config/config.example.ini
