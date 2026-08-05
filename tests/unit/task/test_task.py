@@ -90,7 +90,11 @@ def test_task_manager_post_init_loads_config():
 @pytest.mark.asyncio
 async def test_initialize_success(task_manager, mock_modbus_app):
     """✅ initialize() successfully sets up ModbusApp and watchdog"""
-    with patch('src.Task.task.ModbusApp', return_value=mock_modbus_app):
+    # initialize() ahora levanta tambien MQTT e InfluxDB: se doblan para no
+    # depender de un broker ni de una base de datos en los tests
+    with patch('src.Task.task.ModbusApp', return_value=mock_modbus_app), \
+         patch('src.Task.task.MQTTManager', new_callable=lambda: MagicMock(return_value=AsyncMock())), \
+         patch('src.Task.task.ModbusService', new_callable=lambda: MagicMock(return_value=AsyncMock())):
         result = await task_manager.initialize()
         
         assert result is True
@@ -470,7 +474,8 @@ async def test_start_all_tasks_creates_tasks(task_manager):
     
     # Patch the task methods to avoid actual long-running execution
     with patch.object(task_manager, 'task_read_modbus_periodic', new_callable=AsyncMock) as mock_read, \
-         patch.object(task_manager, 'task_process_queue', new_callable=AsyncMock) as mock_queue:
+         patch.object(task_manager, 'task_process_queue', new_callable=AsyncMock) as mock_queue, \
+         patch.object(task_manager, 'task_publish_mqtt', new_callable=AsyncMock) as mock_mqtt:
         
         # Make the mocked tasks wait briefly then complete
         async def quick_task():
@@ -478,6 +483,7 @@ async def test_start_all_tasks_creates_tasks(task_manager):
         
         mock_read.side_effect = quick_task
         mock_queue.side_effect = quick_task
+        mock_mqtt.side_effect = quick_task
         
         # Start tasks
         start_task = asyncio.create_task(task_manager.start_all_tasks())
@@ -485,9 +491,10 @@ async def test_start_all_tasks_creates_tasks(task_manager):
         
         # Verify tasks were created
         assert task_manager._running is True
-        assert len(task_manager._tasks) == 2
+        assert len(task_manager._tasks) == 3
         assert any(t.get_name() == "read_modbus" for t in task_manager._tasks)
         assert any(t.get_name() == "process_queue" for t in task_manager._tasks)
+        assert any(t.get_name() == "publish_mqtt" for t in task_manager._tasks)
         
         # Stop and clean up
         task_manager._running = False

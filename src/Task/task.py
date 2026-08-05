@@ -1,14 +1,15 @@
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Optional, Set
 from datetime import datetime, time
 from src.Modbus.app import ModbusApp
 from src.Config.config import ConfigManager
 from src.Utils.logging import get_logger
-from src.Utils.utils import QueueManager
+from src.Utils.utils import QueueManager, MQTTManager
 from src.Core.watchdog import BaseWatchdog
 from src.Models.model import NameParamsModbus
 from src.Database.service import ModbusService
+from src.Core.config import settings
 
 
 logger = get_logger(__name__)
@@ -20,6 +21,8 @@ class TaskManager(BaseWatchdog):
     Hereda de BaseWatchdog para monitorear cambios en config.ini
     """
     config: ConfigManager = field(default_factory=ConfigManager)
+    
+    mqtt_manager: Optional[MQTTManager] = field(init=False, default=None)
     
     modbus_service: Optional[ModbusService] = field(init=False, default=None) 
 
@@ -33,7 +36,11 @@ class TaskManager(BaseWatchdog):
 
     modbus_app: Optional[ModbusApp] = field(init=False, default=None)
     queue_manager: QueueManager = field(init=False, default_factory=QueueManager)
-    
+
+    # Nombres de los suscriptores del bus de fan-out (uno por sink)
+    sub_influx: str = field(init=False, default="influxdb")
+    sub_mqtt: str = field(init=False, default="mqtt")
+
 
     _tasks: list = field(init=False, default_factory=list)
     _running: bool = field(init=False, default=False)
@@ -45,7 +52,6 @@ class TaskManager(BaseWatchdog):
     
     def __post_init__(self):
         """Carga configuración inicial"""
-        
 
         BaseWatchdog.__init__(self, poll_interval=2.0)
         
@@ -129,20 +135,17 @@ class TaskManager(BaseWatchdog):
         NO conecta dispositivos - espera a que ModbusConnect=True en config
         """
         try:
-          
+            # Registrar los suscriptores ANTES de que empiece a publicarse:
+            # publish() sólo entrega a las colas ya registradas.
+            self.queue_manager.subscribe(self.sub_influx)
+            self.queue_manager.subscribe(self.sub_mqtt)
+
+            self.mqtt_manager = MQTTManager()
+            await self.mqtt_manager.connect()
             self.modbus_app = ModbusApp(self.config)
             
-            # Intentar inicializar ModbusService (InfluxDB)
-            if self.modbus_service is None:
-                self.modbus_service = ModbusService()
-            
-            try:
-                await self.modbus_service.initialize()
-                logger.info("✅ ModbusService inicializado con InfluxDB")
-            except Exception as e:
-                logger.warning(f"⚠️ No se pudo conectar a InfluxDB: {e}")
-                logger.warning("⚠️ Sistema continuará sin guardado en InfluxDB")
-                # Continuar sin InfluxDB
+            self.modbus_service = ModbusService()
+            await self.modbus_service.initialize()
 
             if not self.modbus_app._load_configs():
                 logger.error("❌ No se pudo cargar configs")
@@ -167,6 +170,8 @@ class TaskManager(BaseWatchdog):
             
         except Exception as e:
             logger.exception(f"❌ Error inicializando TaskManager: {e}")
+            logger.error(f"❌ Error conectando a InfluxDB: {e}")
+            logger.warning("⚠️ Sistema continuará sin guardado en InfluxDB")
             return False
     
     
@@ -264,8 +269,8 @@ class TaskManager(BaseWatchdog):
         try:
             while self._running:
 
-                data = await self.queue_manager.consume()
-                
+                data = await self.queue_manager.consume(self.sub_influx)
+
                 try:
                     results = data.get(NameParamsModbus.results, [])
                     success_count = data.get(NameParamsModbus.success_count, 0)
@@ -295,6 +300,38 @@ class TaskManager(BaseWatchdog):
             logger.exception(f"❌ Error crítico en task_process_queue: {e}")
     
     
+    async def task_publish_mqtt(self):
+        logger.info("📡 Tarea de publicación MQTT iniciada")
+        try:
+            while self._running:
+                
+                data = await self.queue_manager.consume(self.sub_mqtt)
+                if data is None:
+                    logger.warning("⚠️ Recibido dato None en la cola, ignorando")
+                    continue
+                
+                try:
+                   
+                    results = data.get(NameParamsModbus.results, [])
+                    topic_modbus_data= settings.MQTT_TOPIC
+                    if not results:
+                        logger.warning("⚠️ Recibido dato sin resultados en la cola")
+                        continue
+
+                    if not self.mqtt_manager:
+                        logger.error("❌ MQTTManager no inicializado, no se puede publicar")
+                        continue
+                    for result in results:
+                        await self.mqtt_manager.publish(topic_modbus_data, result)
+
+                    logger.info(f"✅ Lote publicado por MQTT ({len(results)} lecturas)")
+
+                except Exception as e:
+                    logger.error(f"❌ Error publicando lote por MQTT: {e}")
+
+        except asyncio.CancelledError:
+            logger.info("⏹️ Tarea de publicación MQTT cancelada")
+    
     async def start_all_tasks(self):
         """Inicia todas las tareas configuradas"""
         if self._running:
@@ -312,6 +349,10 @@ class TaskManager(BaseWatchdog):
             asyncio.create_task(
                 self.task_process_queue(), 
                 name="process_queue"
+            ),
+            asyncio.create_task(
+                self.task_publish_mqtt(),
+                name="publish_mqtt" 
             ),
         ]
         
