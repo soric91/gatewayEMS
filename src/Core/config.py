@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from functools import lru_cache
-from typing import Optional
+from urllib.parse import quote_plus
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -10,27 +10,21 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # InfluxDB settings con valores por defecto para tests
-    INFLUXDB_TOKEN: Optional[str] = None
-    INFLUXDB_ADMIN_USER: Optional[str] = None
-    INFLUXDB_ADMIN_PASSWORD: Optional[str] = None
-    INFLUXDB_ORG: Optional[str] = None
-    INFLUXDB_BUCKET: Optional[str] = None
-    INFLUXDB_RETENTION: Optional[str] = None
-    INFLUXDB_URL: Optional[str] = None
+    INFLUXDB_TOKEN: str
+    INFLUXDB_ADMIN_USER: str
+    INFLUXDB_ADMIN_PASSWORD: str
+    INFLUXDB_ORG: str
+    INFLUXDB_BUCKET: str
+    INFLUXDB_RETENTION: str
+    INFLUXDB_URL: str
     
-    def is_influxdb_configured(self) -> bool:
-        """Verifica si todas las variables de InfluxDB están configuradas"""
-        return all([
-            self.INFLUXDB_TOKEN,
-            self.INFLUXDB_ADMIN_USER,
-            self.INFLUXDB_ADMIN_PASSWORD,
-            self.INFLUXDB_ORG,
-            self.INFLUXDB_BUCKET,
-            self.INFLUXDB_RETENTION,
-            self.INFLUXDB_URL
-        ])
+    MQTT_USER: str
+    MQTT_PASSWORD: str
+    MQTT_HOST: str
+    MQTT_PORT: int
+    MQTT_TOPIC_TLM: str
+    MQTT_TOPIC_CRM: str
+    MQTT_QOS: int
+    MQTT_CLIENT_ID: str
     
-@lru_cache()
-def get_settings() -> Settings:
-    return Settings()
+settings = Settings()

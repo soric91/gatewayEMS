@@ -5,7 +5,9 @@ description = "Gateway EMS - Energy Management System"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "influxdb-client>=1.50.0",
+    "aiomqtt>=2.5.1",
+    "influxdb-client[async]>=1.50.0",
+    "paho-mqtt>=2.1.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.13.1",
     "pymodbus>=3.12.1",
