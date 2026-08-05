@@ -313,7 +313,7 @@ class TaskManager(BaseWatchdog):
                 try:
                    
                     results = data.get(NameParamsModbus.results, [])
-                    topic_modbus_data= settings.MQTT_TOPIC
+                    topic_modbus_data= settings.MQTT_TOPIC_TLM
                     if not results:
                         logger.warning("⚠️ Recibido dato sin resultados en la cola")
                         continue

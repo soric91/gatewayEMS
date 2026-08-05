@@ -19,7 +19,8 @@ _ENV_DEFAULTS = {
     "MQTT_PASSWORD": "test-password",
     "MQTT_HOST": "localhost",
     "MQTT_PORT": "1883",
-    "MQTT_TOPIC": "gateway/test",
+    "MQTT_TOPIC_TLM": "gateway/test/telemetria",
+    "MQTT_TOPIC_CRM": "crm/gateway/",
     "MQTT_QOS": "1",
     "MQTT_CLIENT_ID": "gateway-ems-test",
 }

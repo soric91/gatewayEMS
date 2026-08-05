@@ -100,7 +100,7 @@ async def test_cada_lote_llega_a_influxdb_y_a_mqtt(task_manager):
     # publish(topic, payload): el payload es el segundo argumento
     lotes_mqtt = [c.args[1].data for c in tm.mqtt_manager.publish.await_args_list]
     topics = {c.args[0] for c in tm.mqtt_manager.publish.await_args_list}
-    assert topics == {settings.MQTT_TOPIC}
+    assert topics == {settings.MQTT_TOPIC_TLM}
     assert lotes_influx == lotes_mqtt
     assert len(lotes_influx) == LOTES
 

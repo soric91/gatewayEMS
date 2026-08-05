@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     MQTT_PASSWORD: str
     MQTT_HOST: str
     MQTT_PORT: int
-    MQTT_TOPIC: str
+    MQTT_TOPIC_TLM: str
+    MQTT_TOPIC_CRM: str
     MQTT_QOS: int
     MQTT_CLIENT_ID: str
     
