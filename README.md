@@ -2,545 +2,595 @@
 
 # ⚡ GatewayEMS
 
-### Sistema de Adquisición de Datos Modbus a InfluxDB
+### Sistema de Gestión de Energía con Modbus e InfluxDB
 
 [![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Code Coverage](https://img.shields.io/badge/coverage-84%25-brightgreen.svg)](htmlcov/index.html)
-[![Tests](https://img.shields.io/badge/tests-152%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-139%20passed-brightgreen.svg)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Code Style](https://img.shields.io/badge/code%20style-clean%20architecture-orange.svg)](docs/ARCHITECTURE.md)
 
-**Gateway profesional para lectura de dispositivos Modbus RTU/TCP y almacenamiento en InfluxDB con arquitectura asíncrona.**
+**Un sistema profesional para la lectura, procesamiento y almacenamiento de datos Modbus en tiempo real**
 
-</div>
-
----
-
-## 📋 Contenido
-
-1. [¿Qué es GatewayEMS?](#-qué-es-gatewayems)
-2. [Arquitectura del Sistema](#-arquitectura-del-sistema)
-3. [Configuración](#-configuración)
-4. [Instalación y Ejecución](#-instalación-y-ejecución)
-
----
-
-## 🎯 ¿Qué es GatewayEMS?
-
-**GatewayEMS** es un sistema de adquisición de datos industrial que lee información de dispositivos Modbus (medidores de energía, sensores, PLCs) y la almacena en una base de datos de series temporales **InfluxDB** para análisis, visualización y monitoreo en tiempo real.
-
-### ¿Qué hace?
-
-<div align="center">
-
-![Flujo de datos](docs/img/img_3.png)
-
-</div>
-
-### Características principales
-
-✅ **Modbus RTU y TCP** - Soporta comunicación serial (RS485) y Ethernet  
-✅ **Lectura optimizada** - Modo `blockreading` para agrupar registros contiguos  
-✅ **Asíncrono (AsyncIO)** - Maneja múltiples dispositivos en paralelo sin bloqueos  
-✅ **InfluxDB 2.x** - Base de datos optimizada para métricas con timestamps  
-✅ **Configuración flexible** - `.ini` para dispositivos, `.json` para mapas Modbus, `.env` para credenciales  
-✅ **Docker ready** - `docker-compose.yml` incluido para despliegue rápido  
-✅ **Reconexión automática** - Manejo robusto de errores y pérdida de conexión  
-✅ **Clean Architecture** - Código mantenible con separación de responsabilidades  
-
-### Casos de uso
-
-- 📊 Monitoreo de consumo eléctrico en plantas industriales
-- 🏭 Adquisición de datos de sensores en tiempo real
-- ⚡ Análisis de calidad de energía (voltaje, corriente, potencia)
-- 📈 Dashboards de métricas con Grafana + InfluxDB
-- 🔌 Integración de dispositivos Modbus legacy a sistemas modernos
-
-### Datos en tiempo real
-
-El sistema lee variables como voltaje, corriente, potencia y energía, y las almacena con timestamps para visualización histórica:
-
-<div align="center">
-
-![Lectura Modbus](docs/img/img_1.png)
-*Ejemplo de lectura de registros Modbus desde el dispositivo*
-
-![Almacenamiento InfluxDB](docs/img/img_2.png)
-*Datos almacenados en InfluxDB listos para consultar*
+[Características](#-características) •
+[Instalación](#-instalación-rápida) •
+[Arquitectura](#-arquitectura) •
+[Configuración](#-configuración) •
+[Documentación](#-documentación)
 
 </div>
 
 ---
 
-## 🏗️ Arquitectura del Sistema
+## 📋 Tabla de Contenidos
 
-GatewayEMS implementa **Clean Architecture** con separación en capas y patrón **Producer-Consumer** para desacoplar lectura de almacenamiento.
-
-### Diagrama de componentes
-
-<div align="center">
-
-![Arquitectura del sistema](docs/img/img_4.png)
-
-</div>
-
-### Flujo de datos
-
-1. **Task Manager** inicia el event loop y coordina componentes
-2. **Modbus App** lee `config.ini` y carga mapas JSON de cada dispositivo
-3. **Modbus Clients** se conectan vía RTU o TCP según configuración
-4. **Block Reading**:
-   - Si `blockreading=true`: Agrupa registros contiguos (ej: 0x2006-0x2016 en un solo read)
-   - Si `blockreading=false`: Lee cada registro individualmente
-5. **Producer** coloca datos leídos en una cola asíncrona
-6. **Consumer** (Database Service) procesa la cola en batches
-7. **InfluxDB Repository** normaliza y escribe datos vía API HTTP
-8. **Watchdog** detecta cambios en `config.ini` y recarga configuración sin reiniciar
-
-### Patrones de diseño utilizados
-
-| Patrón | Dónde se aplica | Beneficio |
-|--------|-----------------|-----------|
-| **Producer-Consumer** | Queue entre Modbus y Database | Desacopla lectura de escritura |
-| **Repository** | `DatabaseRepository` | Abstrae acceso a InfluxDB |
-| **Factory** | Creación de clientes Modbus | Centraliza instanciación RTU/TCP |
-| **Observer** | Watchdog de `config.ini` | Recarga configuración en caliente |
-| **Dependency Injection** | `ConfigManager` pasado a componentes | Facilita testing y modularidad |
-
-### Tecnologías
-
-- **Python 3.12+** con AsyncIO para concurrencia
-- **pymodbus 3.x** para comunicación Modbus
-- **influxdb-client** para API v2 de InfluxDB
-- **pydantic** para validación de datos con type hints
-- **Docker** + **docker-compose** para despliegue
+- [Características](#-características)
+- [Arquitectura](#-arquitectura)
+- [Requisitos](#-requisitos)
+- [Instalación Rápida](#-instalación-rápida)
+- [Configuración](#-configuración)
+- [Uso](#-uso)
+- [Estructura del Proyecto](#-estructura-del-proyecto)
+- [Testing](#-testing)
+- [Documentación](#-documentación)
+- [Contribuciones](#-contribuciones)
+- [Licencia](#-licencia)
 
 ---
 
-## ⚙️ Configuración
+## ✨ Características
 
-El sistema utiliza **3 tipos de archivos** para configuración modular:
+### 🔌 Conectividad Modbus Completa
+- ✅ **Modbus RTU** - Comunicación serial RS485/RS232
+- ✅ **Modbus TCP** - Comunicación sobre Ethernet
+- ✅ **Conexiones persistentes** - Optimización de recursos
+- ✅ **Reconexión automática** - Manejo robusto de errores
+- ✅ **Múltiples dispositivos** - Gestión paralela de sensores
 
-### 1️⃣ `.env` - Variables de entorno (Credenciales)
+### 📊 Almacenamiento Time-Series
+- ✅ **InfluxDB 2.x** - Base de datos optimizada para series temporales
+- ✅ **Escritura asíncrona** - Alta performance sin bloqueos
+- ✅ **Batch processing** - Agrupación eficiente de datos
+- ✅ **Normalización automática** - Conversión de tipos y validación
 
-Configuración de InfluxDB y secretos. **NO debe commitearse a Git**.
+### 🏗️ Arquitectura Profesional
+- ✅ **Clean Architecture** - Separación clara de responsabilidades
+- ✅ **Async/Await** - Programación asíncrona con AsyncIO
+- ✅ **Producer-Consumer** - Patrón de colas para desacoplamiento
+- ✅ **Type Hints** - Tipado estático con Pydantic
+- ✅ **84% Test Coverage** - 139 tests automatizados
+
+### ⚙️ Configuración Flexible
+- ✅ **Config.ini dinámico** - Cambios en caliente con watchdog
+- ✅ **Variables de entorno** - Gestión segura con .env
+- ✅ **Mapas JSON** - Definición externa de registros Modbus
+- ✅ **Horarios programables** - Control temporal de lecturas
+
+### 📈 Monitoreo y Logs
+- ✅ **Logging estructurado** - Trazabilidad completa
+- ✅ **Health checks** - Verificación de conexiones
+- ✅ **Graceful shutdown** - Cierre limpio de recursos
+- ✅ **Docker ready** - Contenedorización incluida
+
+---
+
+## 🏛️ Arquitectura
+
+GatewayEMS implementa **Clean Architecture** con separación de capas y principios SOLID:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         TASK MANAGER                            │
+│                    (Orquestador Principal)                      │
+│  • AsyncIO Event Loop                                           │
+│  • Producer-Consumer Queue                                      │
+│  • Watchdog Configuration Monitor                               │
+└────────────┬────────────────────────────────────┬───────────────┘
+             │                                    │
+             ▼                                    ▼
+    ┌────────────────┐                  ┌────────────────┐
+    │  MODBUS APP    │                  │ MODBUS SERVICE │
+    │  (Hardware)    │                  │ (Business)     │
+    └────────┬───────┘                  └────────┬───────┘
+             │                                    │
+             ▼                                    ▼
+    ┌────────────────┐                  ┌────────────────┐
+    │ Device Clients │                  │   Repository   │
+    │ • TCP Client   │                  │   (Database)   │
+    │ • RTU Client   │                  └────────┬───────┘
+    └────────────────┘                           │
+                                                 ▼
+                                        ┌────────────────┐
+                                        │ InfluxDB Conn  │
+                                        │ (Infrastructure)│
+                                        └────────────────┘
+```
+
+### 🔄 Flujo de Datos
+
+```
+📡 Modbus Device → 🔌 Client → 📦 DeviceReadResult
+                                        ↓
+                               ⚙️ EnergyPoint (Domain)
+                                        ↓
+                               📊 InfluxDB Point
+                                        ↓
+                               💾 InfluxDB Database
+```
+
+**Capas de la arquitectura:**
+
+1. **Capa de Presentación** (`src/Task/`) - Orquestación de tareas async
+2. **Capa de Aplicación** (`src/Modbus/app.py`) - Lógica de comunicación Modbus
+3. **Capa de Dominio** (`src/Models/`) - Modelos de negocio y validación
+4. **Capa de Infraestructura** (`src/Database/`) - Persistencia en InfluxDB
+5. **Capa de Configuración** (`src/Config/`, `src/Core/`) - Settings y watchdog
+
+---
+
+## 📦 Requisitos
+
+### Software
+- **Python** >= 3.12
+- **InfluxDB** 2.x (incluido en Docker Compose)
+- **uv** - Gestor de paquetes rápido (recomendado) o pip
+
+### Hardware (Opcional)
+- Dispositivos Modbus RTU/TCP (medidores de energía, sensores, etc.)
+- Adaptador RS485 para Modbus RTU (ej: `/dev/ttyRS485`)
+
+---
+
+## 🚀 Instalación Rápida
+
+### 1️⃣ Clonar el repositorio
 
 ```bash
-# .env
-INFLUXDB_URL=http://localhost:8086
-INFLUXDB_TOKEN=tu_token_secreto_de_64_caracteres_minimo
-INFLUXDB_ORG=gateway_ems
-INFLUXDB_BUCKET=modbus_data
-INFLUXDB_ADMIN_USER=admin
-INFLUXDB_ADMIN_PASSWORD=gateway_ems_2024
-INFLUXDB_RETENTION=90  # Días de retención
-```
-
-**Cómo obtener el token:**
-1. Accede a `http://localhost:8086`
-2. Ve a **Settings** → **Tokens**
-3. Copia el token o genera uno nuevo con permisos de lectura/escritura en `modbus_data`
-
----
-
-### 2️⃣ `config.ini` - Configuración de dispositivos
-
-Define qué dispositivos Modbus leer, intervalos y parámetros de conexión.
-
-```ini
-# src/Config/config.ini
-
-[DEFAULT]
-loglevel = INFO
-logstdout = True
-
-[MAINMODBUS]
-devicesnames = Modbus_Device1_RTU, Modbus_Device2_TCP  # Lista de dispositivos (separados por coma)
-interval = 5                                            # Intervalo de lectura en segundos
-start_hour = 0                                          # Hora de inicio (0-23)
-stop_hour = 23                                          # Hora de fin (0-23)
-
-# ========================================
-# EJEMPLO 1: Dispositivo Modbus RTU
-# ========================================
-[Modbus_Device1_RTU]
-identify_device = bf6a469f-4c2a-4402-9438-49a491ad2238  # UUID único
-device_type = CT_Meter                                   # Tipo de dispositivo
-protocol = RTU                                           # Modbus RTU (Serial)
-serialport = /dev/ttyUSB0                              # Puerto serial RS485
-baudrate = 9600                                         # Velocidad: 9600, 19200, 38400, etc.
-mapfile = src/Modbus/maps/Device1_RTU.json              # Ruta al mapa JSON
-device_id = 11                                          # Slave ID Modbus (1-247)
-modbusconnect = true                                    # Habilitar conexión
-modbusread = true                                       # Habilitar lectura
-blockreading = true                                     # Agrupar registros contiguos
-
-# ========================================
-# EJEMPLO 2: Dispositivo Modbus TCP
-# ========================================
-[Modbus_Device2_TCP]
-identify_device = 8f3c2a1e-5b4d-4e9a-a123-9f8e7d6c5b4a  # UUID único (diferente)
-device_type = Energy_Meter                               # Tipo de dispositivo
-protocol = TCP                                           # Modbus TCP (Ethernet)
-host = 192.168.1.100                                    # Dirección IP del dispositivo
-port = 502                                              # Puerto Modbus TCP (default: 502)
-mapfile = src/Modbus/maps/Device2_TCP.json              # Ruta al mapa JSON
-device_id = 1                                           # Slave ID Modbus (1-247)
-modbusconnect = true                                    # Habilitar conexión
-modbusread = true                                       # Habilitar lectura
-blockreading = false                                    # Leer registros individualmente
-```
-
-**Parámetros clave:**
-
-| Parámetro | Valores | Descripción |
-|-----------|---------|-------------|
-| `protocol` | `RTU` / `TCP` | Tipo de comunicación Modbus |
-| `serialport` | `/dev/ttyUSB0` | Puerto serial (solo RTU) |
-| `host` + `port` | `192.168.1.100:502` | IP y puerto (solo TCP) |
-| `device_id` | `1-247` | Slave ID del dispositivo Modbus |
-| `blockreading` | `true` / `false` | Agrupar registros vs leer individualmente |
-| `interval` | `1-3600` | Segundos entre lecturas |
-
----
-
-### 3️⃣ `*.json` - Mapas Modbus (Registros)
-
-Define **qué registros leer** de cada dispositivo y cómo interpretarlos.
-
-```json
-{
-  "VOLTAGE_A": {
-    "address": "0x2006",
-    "data_type": "f",
-    "gain": "1"
-  },
-  "CURRENT_A": {
-    "address": "0x200C",
-    "data_type": "f",
-    "gain": "1"
-  },
-  "POWER_ACTIVE_TOTAL": {
-    "address": "0x2012",
-    "data_type": "f",
-    "gain": "1"
-  },
-  "ENERGY_TOTAL": {
-    "address": "0x4026",
-    "data_type": "f",
-    "gain": "0.01"
-  }
-}
-```
-
-**Estructura del mapa:**
-
-| Campo | Descripción | Ejemplo |
-|-------|-------------|---------|
-| **Key** | Nombre de la variable (aparecerá en InfluxDB) | `VOLTAGE_A` |
-| `address` | Dirección del registro Modbus (hex) | `0x2006` (8198 decimal) |
-| `data_type` | Tipo de dato a leer | Ver tabla abajo |
-| `gain` | Multiplicador para normalización | `0.01` (divide entre 100) |
-
-**Tipos de datos soportados:**
-
-| `data_type` | Descripción | Registros | Ejemplo |
-|-------------|-------------|-----------|---------|
-| `f` | Float 32-bit | 2 registros (4 bytes) | Voltaje: 220.5 V |
-| `i32` | Integer 32-bit con signo | 2 registros | Potencia: -1500 W |
-| `ui32` | Unsigned Integer 32-bit | 2 registros | Energía: 123456 Wh |
-| `i16` | Integer 16-bit con signo | 1 registro | Temperatura: -10 °C |
-| `ui16` | Unsigned Integer 16-bit | 1 registro | Estado: 65535 |
-
-**Ejemplo de lectura:**
-- `VOLTAGE_A` en `0x2006` con `data_type: f` → Lee 2 registros consecutivos (0x2006, 0x2007)
-- Convierte bytes a float IEEE 754
-- Multiplica por `gain` (1.0) → Resultado: 220.5 V
-- Almacena en InfluxDB como: `modbus_measurement,device_name=Device1,variable_name=VOLTAGE_A value=220.5`
-
----
-
-### 🔄 Modo BlockReading
-
-**Optimización importante** para reducir llamadas Modbus:
-
-#### `blockreading = true` (Recomendado)
-```
-Registros: 0x2006, 0x2008, 0x200C, 0x200E
-          ↓ (Agrupa contiguos)
-Modbus Read: 1 llamada para bloque 0x2006-0x200E (5 registros)
-```
-
-#### `blockreading = false` (Para dispositivos restrictivos)
-```
-Registros: 0x2006, 0x2008, 0x200C, 0x200E
-          ↓ (Lee individualmente)
-Modbus Read: 4 llamadas separadas
-```
-
-**Cuándo usar `blockreading=false`:**
-- Dispositivos que no soportan lectura de múltiples registros
-- Registros con "huecos" en memoria (ej: 0x2006, 0x3000)
-- Debugging de comunicación Modbus
-
----
-
-## 🚀 Instalación y Ejecución
-
-### Requisitos previos
-
-- **Python 3.12+** ([Descargar](https://www.python.org/downloads/))
-- **Docker** y **Docker Compose** ([Instalar](https://docs.docker.com/get-docker/))
-- **Git** (opcional, para clonar el repo)
-- **Puerto serial** (para Modbus RTU) o **red Ethernet** (para Modbus TCP)
-
----
-
-### Paso 1: Clonar el repositorio
-
-```bash
-git clone https://github.com/TU_USUARIO/gatewayEMS.git
+git clone https://github.com/tu-usuario/gatewayEMS.git
 cd gatewayEMS
 ```
 
----
+### 2️⃣ Instalar uv (si no lo tienes)
 
-### Paso 2: Configurar variables de entorno
+```bash
+# En Linux/macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# En Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+### 3️⃣ Crear entorno virtual e instalar dependencias
+
+```bash
+# Crear entorno virtual con Python 3.12+
+uv venv
+
+# Activar el entorno virtual
+# Linux/macOS:
+source .venv/bin/activate
+# Windows:
+.venv\Scripts\activate
+
+# Instalar todas las dependencias (incluyendo las de testing)
+uv sync --all-extras
+```
+
+### 4️⃣ Configurar variables de entorno
 
 ```bash
 # Copiar el archivo de ejemplo
 cp .env.example .env
 
-# Editar con tus credenciales
-nano .env  # o usa tu editor favorito
+# Editar .env con tus credenciales
+nano .env
 ```
 
-Configuración mínima en `.env`:
-```bash
+**Mínimo requerido en `.env`:**
+```env
 INFLUXDB_URL=http://localhost:8086
-INFLUXDB_TOKEN=token_generado_en_paso_3
+INFLUXDB_TOKEN=tu_token_generado
 INFLUXDB_ORG=gateway_ems
 INFLUXDB_BUCKET=modbus_data
+INFLUXDB_ADMIN_USER=admin
+INFLUXDB_ADMIN_PASSWORD=tu_password_seguro
+INFLUXDB_RETENTION=90
 ```
 
----
-
-### Paso 3: Iniciar InfluxDB con Docker
+### 5️⃣ Iniciar InfluxDB con Docker
 
 ```bash
-# Levantar InfluxDB (primer inicio configura automáticamente)
-docker-compose up -d influxdb
+# Iniciar servicios (InfluxDB)
+docker-compose up -d
 
-# Esperar a que esté listo (~30 segundos)
-docker logs -f gateway_ems_influxdb
-
-# Acceder a la UI: http://localhost:8086
-# Usuario: admin
-# Password: gateway_ems_2024 (del .env)
+# Verificar que InfluxDB está corriendo
+docker ps
 ```
 
-**En la UI de InfluxDB:**
-1. Ve a **Settings** → **Tokens**
-2. Copia el token generado
-3. Actualiza `INFLUXDB_TOKEN` en `.env`
+### 6️⃣ Configurar dispositivos Modbus
 
----
+Edita `data/config.ini` para agregar tus dispositivos:
 
-### Paso 4: Configurar dispositivos Modbus
-
-Edita `src/Config/config.ini`:
-
-```bash
-nano src/Config/config.ini
-```
-
-**Ejemplo para Modbus RTU:**
 ```ini
 [MAINMODBUS]
-devicesnames = Mi_Medidor
+devicesnames = Modbus_DTSU666
 interval = 5
+start_hour = 0
+stop_hour = 23
 
-[Mi_Medidor]
+[Modbus_DTSU666]
 identify_device = bf6a469f-4c2a-4402-9438-49a491ad2238
-device_type = Energy_Meter
+devicetype = CT_Meter
 protocol = RTU
-serialport = /dev/ttyUSB0  # Cambia según tu puerto
+serialport = /dev/ttyRS485
 baudrate = 9600
-mapfile = src/Modbus/maps/Mi_Medidor.json
-device_id = 1
+mapfile = src/Modbus/maps/Modbus_DTSU666.json
+device_id = 11
 modbusconnect = true
 modbusread = true
-blockreading = true
 ```
 
-**Ejemplo para Modbus TCP:**
+### 7️⃣ Ejecutar el sistema
+
+```bash
+# Modo desarrollo
+python main.py
+
+# Modo producción con logs
+python main.py 2>&1 | tee gateway.log
+```
+
+---
+
+## ⚙️ Configuración
+
+### 📝 Configuración Detallada de `config.ini`
+
+La sección `[MAINMODBUS]` en el archivo `config.ini` controla los dispositivos Modbus y su configuración principal.
+
+#### Variable `devicesnames`
+- **Descripción:** Esta variable lista los nombres de los dispositivos que el sistema debe gestionar.
+- **Funcionamiento:** Cada nombre listado en `devicesnames` debe tener su propia sección `[DEVICE_NAME]` en el archivo `config.ini`.
+- **Importante:** Si un dispositivo está en `devicesnames` pero no tiene su propia sección, el sistema **no lo procesará**.
+
+Ejemplo:
 ```ini
-[Mi_Medidor_TCP]
-protocol = TCP
-host = 192.168.1.100
-port = 502
-# ... resto igual
+[MAINMODBUS]
+devicesnames = Modbus_DTSU666, Device_2
 ```
+En este ejemplo:
+- El sistema intentará gestionar los dispositivos `Modbus_DTSU666` y `Device_2`.
+- Deben existir secciones `[Modbus_DTSU666]` y `[Device_2]` en el archivo.
+
+#### Variables `modbusconnect` y `modbusread`
+Estas dos variables en las secciones de dispositivos controlan el comportamiento de cada dispositivo:
+
+- **`modbusconnect`:**
+  - Cuando está en `true`, el sistema intentará conectarse al dispositivo.
+  - En `false`, el sistema no conecta con el dispositivo, aunque esté en `devicesnames`.
+
+- **`modbusread`:**
+  - Cuando está en `true`, el sistema leerá registros del dispositivo después de conectarse.
+  - En `false`, el sistema se conectará pero no leerá datos.
+
+Por defecto, ambas variables suelen estar configuradas en `true`.
+
+#### Ejemplo de configuración completa:
+```ini
+[MAINMODBUS]
+devicesnames = Modbus_DTSU666
+
+[Modbus_DTSU666]
+identify_device = bf6a469f-4c2a-4402-9438-49a491ad2238
+devicetype = CT_Meter
+protocol = RTU
+serialport = /dev/ttyRS485
+baudrate = 9600
+mapfile = src/Modbus/maps/Modbus_DTSU666.json
+device_id = 11
+modbusconnect = true
+modbusread = true
+```
+
+#### Notas importantes:
+1. Si la sección `[DEVICE_NAME]` no existe, el sistema ignorará ese dispositivo.
+2. **Errores comunes:**
+   - Si `modbusconnect` está en `false`, el dispositivo no se conectará (aunque esté en `devicesnames`).
+   - Si `modbusread` está en `false`, el sistema no realizará lecturas Modbus del dispositivo.
+
 
 ---
 
-### Paso 5: Crear mapa de registros Modbus
+## 💡 Uso
 
-Crea `src/Modbus/maps/Mi_Medidor.json` con los registros de tu dispositivo:
+### 🎯 Inicio Rápido
 
-```json
-{
-  "VOLTAGE": {
-    "address": "0x0000",
-    "data_type": "f",
-    "gain": "1"
-  },
-  "CURRENT": {
-    "address": "0x0002",
-    "data_type": "f",
-    "gain": "1"
-  }
-}
-```
-
-**Tip:** Consulta el manual de tu dispositivo Modbus para obtener las direcciones correctas.
-
----
-
-### Paso 6: Instalar dependencias Python
-
-Usa **uv** (recomendado) o **pip**:
+Una vez instalado y configurado:
 
 ```bash
-# Opción 1: Con uv (más rápido)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv sync
+# Activar entorno virtual
+source .venv/bin/activate
 
-# Opción 2: Con pip tradicional
-pip install -r requirements.txt
-```
-
----
-
-### Paso 7: Ejecutar GatewayEMS
-
-```bash
-# Con uv
-uv run python main.py
-
-# O con python directo (si instalaste con pip)
+# Iniciar el sistema
 python main.py
 ```
 
-**Salida esperada:**
+### 📊 Monitoreo en Tiempo Real
+
+El sistema mostrará logs con emojis indicadores:
+
 ```
-INFO - ConfigManager initialized
-INFO - Loading Modbus devices: ['Mi_Medidor']
-INFO - Connecting to Mi_Medidor (RTU /dev/ttyUSB0)
-INFO - Building read blocks (blockreading=True)
-INFO - Starting Modbus read loop (interval: 5s)
-INFO - Data written to InfluxDB: 8 points
+✅ TaskManager inicializado
+🔌 Conectando Modbus_DTSU666...
+📖 Iniciando lectura de Modbus_DTSU666...
+📥 Procesando lote de resultados: 1/1 exitosos
+✅ Lote procesado y guardado en InfluxDB
 ```
 
----
+### 🔄 Cambios en Caliente
 
-### Paso 8: Verificar datos en InfluxDB
-
-1. Abre `http://localhost:8086`
-2. Ve a **Data Explorer** (icono 📊)
-3. Selecciona:
-   - Bucket: `modbus_data`
-   - Measurement: `modbus_measurement`
-   - Fields: `VOLTAGE`, `CURRENT`, etc.
-4. Haz clic en **Submit**
-5. Verás tus datos en gráfica 📈
-
----
-
-### 🐳 Despliegue con Docker (Opcional)
-
-Si prefieres correr **todo en Docker** (incluido el gateway Python):
+El sistema detecta automáticamente cambios en `config.ini`:
 
 ```bash
-# Construir y levantar todos los servicios
-docker-compose up -d
+# Editar configuración
+nano data/config.ini
 
-# Ver logs
-docker-compose logs -f gateway_app
-
-# Detener
-docker-compose down
+# El watchdog detectará los cambios y actualizará automáticamente
+# No es necesario reiniciar el sistema
 ```
 
-Edita `docker-compose.yml` para descomentar el servicio `gateway_app` si está deshabilitado.
+### 📈 Visualizar Datos en InfluxDB
 
----
+1. Abre tu navegador en `http://localhost:8086`
+2. Login con credenciales de `.env`
+3. Ve a **Data Explorer**
+4. Ejecuta una query Flux:
 
-### 🛑 Detener GatewayEMS
-
-```bash
-# Si está corriendo en terminal (Ctrl+C)
-# Hace graceful shutdown (cierra conexiones limpiamente)
-
-# Detener Docker
-docker-compose down
-
-# O solo InfluxDB
-docker-compose stop influxdb
+```flux
+from(bucket: "modbus_data")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "energy_data")
+  |> filter(fn: (r) => r.device_id == "11")
 ```
 
 ---
 
-## 📊 Visualización de Datos
+### Tipos de datos soportados en Modbus
+El sistema soporta diferentes tipos de datos Modbus, los cuales definen cómo se interpretan los valores leídos de los registros. Los tipos disponibles son:
 
-Una vez que los datos estén en InfluxDB, puedes:
+| Tipo de Dato | Código | Descripción                     |
+|--------------|--------|---------------------------------|
+| FLOAT        | `f`    | Número de punto flotante (32 bits). |
+| INT16        | `h`    | Entero de 16 bits con signo.    |
+| UINT16       | `H`    | Entero de 16 bits sin signo.    |
+| INT32        | `i`    | Entero de 32 bits con signo.    |
+| UINT32       | `I`    | Entero de 32 bits sin signo.    |
 
-1. **Usar Data Explorer** (incluido en InfluxDB UI)
-   - Crear gráficas interactivas
-   - Escribir queries Flux
-   - Exportar a CSV
+#### Notas importantes:
+- **Direcciones:** Los `address` en los archivos JSON pueden ser en formato **decimal** o **hexadecimal** (por ejemplo, `0x2006` o `8198`). 
+  - Si usas hexadecimal, asegúrate de incluir el prefijo `0x`.
+- **Gain:** El campo `gain` se utiliza para multiplicar el valor leído. Por defecto, es `1` (sin alteración).
 
-2. **Crear Dashboards** en InfluxDB
-   - Paneles personalizados
-   - Alertas automáticas
-   - Refresh en tiempo real
+#### Ejemplo con decimales y hexadecimales:
+```json
+{
+    "VOLTAGE_A": {
+      "address": "8198",  // Dirección decimal = 0x2006
+      "data_type": "f",
+      "gain": "1"
+    },
+    "CURRENT_B": {
+      "address": "0x200E",  // Dirección hexadecimal
+      "data_type": "f",
+      "gain": "1"
+    }
+}
+```
 
-3. **Integrar con Grafana** (recomendado para producción)
-   ```bash
-   # Agregar a docker-compose.yml
-   grafana:
-     image: grafana/grafana:latest
-     ports:
-       - "3000:3000"
-   ```
+---
 
-4. **Consultar vía API** (para integraciones custom)
-   ```python
-   from influxdb_client import InfluxDBClient
-   
-   client = InfluxDBClient(url="http://localhost:8086", token="tu_token")
-   query = 'from(bucket:"modbus_data") |> range(start: -1h)'
-   result = client.query_api().query(query)
-   ```
+## 🏗️ Estructura del Proyecto
+
+```
+gatewayEMS/
+├── 📂 src/
+│   ├── 📂 Config/          # Gestión de config.ini
+│   │   └── config.py       # ConfigManager
+│   ├── 📂 Core/            # Configuración base
+│   │   ├── config.py       # Settings con Pydantic
+│   │   └── watchdog.py     # Monitor de cambios
+│   ├── 📂 Database/        # Capa de persistencia
+│   │   ├── connection.py   # InfluxDB connection pool
+│   │   ├── repository.py   # Data access layer
+│   │   └── service.py      # Business logic
+│   ├── 📂 Modbus/          # Comunicación Modbus
+│   │   ├── app.py          # ModbusApp orchestrator
+│   │   ├── client.py       # TCP/RTU clients
+│   │   ├── modbusmap.py    # JSON map parser
+│   │   ├── read.py         # Register reading
+│   │   ├── util.py         # Helper functions
+│   │   └── 📂 maps/        # JSON device maps
+│   ├── 📂 Models/          # Domain models
+│   │   └── model.py        # EnergyPoint, DeviceReadResult
+│   ├── 📂 Task/            # Task orchestration
+│   │   └── task.py         # TaskManager
+│   └── 📂 Utils/           # Utilities
+│       ├── logging.py      # Logger configuration
+│       └── utils.py        # QueueManager
+├── 📂 tests/               # Test suite (84% coverage)
+│   ├── 📂 unit/            # Unit tests
+│   ├── 📂 integration/     # Integration tests
+│   └── 📂 fixtures/        # Test fixtures
+├── 📂 scripts/             # Utility scripts
+│   └── test_influxdb_manual.py
+├── 📂 data/                # Configuration files
+│   └── config.ini          # Main configuration
+├── 📄 .env                 # Environment variables
+├── 📄 docker-compose.yml   # Docker services
+├── 📄 pyproject.toml       # Project metadata
+└── 📄 README.md            # This file
+```
 
 ---
 
 ## 🧪 Testing
 
-El proyecto incluye **152 tests** con **84% de cobertura**:
+El proyecto cuenta con **139 tests automatizados** con **84% de cobertura**:
 
 ```bash
-# Ejecutar todos los tests
+# Ejecutar todos los tests con reporte de cobertura
 uv run pytest
 
-# Con reporte de cobertura
+# Ver reporte HTML de cobertura
 uv run pytest --cov=src --cov-report=html
+open htmlcov/index.html
 
-# Ver reporte HTML
-xdg-open htmlcov/index.html
+# Ejecutar solo tests unitarios
+uv run pytest tests/unit/ -v
+
+# Ejecutar tests de integración
+uv run pytest tests/integration/ -v
+
+# Ejecutar tests con marcadores específicos
+uv run pytest -m "unit" -v
+```
+
+### 📊 Cobertura por Módulo
+
+| Módulo              | Cobertura | Tests |
+|---------------------|-----------|-------|
+| `Models/model.py`   | 98%       | 9     |
+| `Modbus/read.py`    | 100%      | 16    |
+| `Modbus/modbusmap.py` | 94%     | 8     |
+| `Task/task.py`      | 88%       | 30    |
+| `Config/config.py`  | 86%       | 15    |
+| **Total**           | **84%**   | **139** |
+
+---
+
+## 📚 Documentación
+
+### 📖 Guías Disponibles
+
+- **[CONFIGURATION.md](docs/CONFIGURATION.md)** - Configuración detallada de dispositivos y mapas
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Explicación profunda de la arquitectura
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Guía para contribuidores
+- **[API_REFERENCE.md](docs/API_REFERENCE.md)** - Referencia de APIs internas
+
+### 🔧 Ejemplos de Uso
+
+#### Ejemplo 1: Agregar un nuevo dispositivo Modbus TCP
+
+```ini
+[MAINMODBUS]
+devicesnames = ExistingDevice, NewTCPMeter
+
+[NewTCPMeter]
+identify_device = 12345678-1234-1234-1234-123456789abc
+devicetype = Energy_Meter
+protocol = TCP
+host = 192.168.1.100
+port = 502
+mapfile = src/Modbus/maps/NewTCPMeter.json
+device_id = 1
+modbusconnect = true
+modbusread = true
+```
+
+#### Ejemplo 2: Crear un mapa Modbus personalizado
+
+```json
+{
+  "VOLTAGE_L1": {
+    "address": "0x0000",
+    "data_type": "f",
+    "gain": "1",
+    "function_code": 3
+  },
+  "CURRENT_L1": {
+    "address": "0x0006",
+    "data_type": "f",
+    "gain": "0.001"
+  },
+  "POWER": {
+    "address": "0x0010",
+    "data_type": "I",
+    "gain": "1"
+  }
+}
+```
+
+#### Ejemplo 3: Consultar datos en InfluxDB
+
+```flux
+from(bucket: "modbus_data")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "energy_data")
+  |> filter(fn: (r) => r.device_id == "11")
+  |> filter(fn: (r) => r._field == "voltage_a")
 ```
 
 ---
 
+## 🐛 Troubleshooting
+
+### Problema: InfluxDB no conecta
+
+```bash
+# Verificar que el contenedor está corriendo
+docker ps | grep influxdb
+
+# Ver logs de InfluxDB
+docker logs gateway_ems_influxdb
+
+# Reiniciar el contenedor
+docker-compose restart influxdb
+```
+
+### Problema: Dispositivo Modbus no responde
+
+1. Verificar conexión física (cable RS485/Ethernet)
+2. Revisar configuración de baudrate y device_id
+3. Verificar logs: `tail -f src/Log/gateway.log`
+4. Probar con herramienta externa (modpoll, qmodmaster)
+
+### Problema: Tests fallan
+
+```bash
+# Limpiar cache de pytest
+rm -rf .pytest_cache __pycache__
+
+# Reinstalar dependencias
+uv sync --reinstall
+
+# Ejecutar tests con verbose
+uv run pytest -vv
+```
+
+---
+
+## 🤝 Contribuciones
+
+¡Las contribuciones son bienvenidas! Por favor sigue estos pasos:
+
+1. **Fork** el repositorio
+2. Crea una **rama** para tu feature (`git checkout -b feature/AmazingFeature`)
+3. **Escribe tests** para tu código
+4. Asegúrate de que **todos los tests pasan** (`uv run pytest`)
+5. Haz **commit** de tus cambios (`git commit -m 'Add: AmazingFeature'`)
+6. **Push** a la rama (`git push origin feature/AmazingFeature`)
+7. Abre un **Pull Request**
+
+### 📋 Checklist para PRs
+
+- [ ] Tests agregados/actualizados
+- [ ] Cobertura >= 80%
+- [ ] Documentación actualizada
+- [ ] Type hints agregados
+- [ ] Logs apropiados
+- [ ] Sin warnings de pytest
+
+---
 
 ## 📄 Licencia
 
@@ -548,22 +598,37 @@ Este proyecto está bajo la licencia **MIT**. Ver [LICENSE](LICENSE) para más d
 
 ---
 
+## 👥 Autores
 
-## ✨ Agradecimientos
+- **Tu Nombre** - *Desarrollo inicial* - [@tu-usuario](https://github.com/tu-usuario)
 
-Desarrollado con ❤️ para la comunidad de automatización industrial.
+---
 
-**Stack tecnológico:**
-- [Python](https://www.python.org/) - Lenguaje de programación
-- [pymodbus](https://github.com/pymodbus-dev/pymodbus) - Librería Modbus
-- [InfluxDB](https://www.influxdata.com/) - Base de datos time-series
-- [Docker](https://www.docker.com/) - Contenedorización
-- [pytest](https://pytest.org/) - Framework de testing
+## 🙏 Agradecimientos
+
+- [PyModbus](https://github.com/pymodbus-dev/pymodbus) - Librería Modbus
+- [InfluxDB](https://www.influxdata.com/) - Time series database
+- [Pydantic](https://docs.pydantic.dev/) - Data validation
+- [uv](https://github.com/astral-sh/uv) - Fast Python package manager
+
+---
+
+## 📞 Soporte
+
+¿Necesitas ayuda? Abre un [Issue](https://github.com/tu-usuario/gatewayEMS/issues) o contacta:
+
+- 📧 Email: tu-email@example.com
+- 💬 Discord: [Únete al servidor](https://discord.gg/tu-servidor)
+- 📖 Wiki: [Documentation Wiki](https://github.com/tu-usuario/gatewayEMS/wiki)
 
 ---
 
 <div align="center">
 
-**[⬆ Volver arriba](#-gatewayems)**
+**⭐ Si este proyecto te ayudó, considera darle una estrella ⭐**
+
+Made with ❤️ by [Tu Nombre]
+
+[⬆ Volver arriba](#-gatewayems)
 
 </div>

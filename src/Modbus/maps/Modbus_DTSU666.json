@@ -69,6 +69,24 @@
       "gain": "1"
 
     },
+    "POWER_REACTIVE_INST_TOTAL": {
+
+      "address": "0x201A",
+
+      "data_type": "f",
+
+      "gain": "1"
+
+    },
+    "FACTOR_POTENCIA_TOTAL": {
+
+      "address": "0x202A",
+
+      "data_type": "f",
+
+      "gain": "1"
+
+    },
     "POWER_ACTIVE_TOTAL_POS": {
 
       "address": "0x4026",

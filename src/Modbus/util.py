@@ -115,6 +115,7 @@ class ModbusRegister:
                     value = reg if reg < 32768 else reg - 65536
                 else:  
                     value = reg
+                
             
             
             return round((value * self.gain),2)

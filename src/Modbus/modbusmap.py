@@ -154,7 +154,7 @@ class ModbusDeviceMap:
             result.update(parsed)
             
             current_offset += block.count
-        
+         
         return result
     
     def get_variables_list(self) -> List[str]:
