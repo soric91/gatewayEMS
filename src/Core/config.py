@@ -28,4 +28,23 @@ class Settings(BaseSettings):
     MQTT_CLIENT_ID: str
     GATEWAY_UUID: str
 
+    # --- CRM -----------------------------------------------------------
+    # Credencial de larga vida que el CRM enseña una sola vez al emitirla.
+    # Se cambia por un token corto en POST /gateway/token.
+    CRM_API_URL: str
+    GATEWAY_CREDENTIAL: str
+    CRM_HEARTBEAT_SECONDS: int = 60
+    CRM_HTTP_TIMEOUT: int = 30
+
+    @property
+    def MQTT_TOPIC_CONFIG(self) -> str:
+        """Donde el CRM avisa a ESTE gateway de que tiene configuración."""
+        return f"{self.MQTT_TOPIC_CRM.rstrip('/')}/{self.GATEWAY_UUID}/config"
+
+    @property
+    def MQTT_TOPIC_STATUS(self) -> str:
+        """Donde este gateway reporta su presencia al CRM."""
+        return f"{self.MQTT_TOPIC_CRM.rstrip('/')}/{self.GATEWAY_UUID}/status"
+
+
 settings = Settings()
