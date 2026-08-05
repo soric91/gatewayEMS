@@ -1,6 +1,6 @@
 from src.Database.repository import InfluxDBRepository
 from dataclasses import dataclass, field
-from typing import  List, Optional
+from typing import  List
 from src.Models.model import EnergyPoint, DeviceReadResult
 from src.Utils.logging import get_logger
 
@@ -20,12 +20,8 @@ class ModbusService:
     NO sabe cómo se leen los registros Modbus (eso es otra capa).
     """
     
-    _repository: Optional[InfluxDBRepository] = None
+    _repository: InfluxDBRepository = field(default_factory=InfluxDBRepository)
     _initialized: bool = field(default=False, init=False)
-    
-    def __post_init__(self):
-        if self._repository is None:
-            self._repository = InfluxDBRepository()
     
     async def initialize(self) -> None:
         """

@@ -1,6 +1,32 @@
 """
-Fixtures globales compartidas por todos los tests
+Fixtures globales compartidas por todos los tests.
+
+El bloque de variables de entorno va ANTES de cualquier import de `src`:
+`src.Core.config.Settings` exige las credenciales de InfluxDB y MQTT, y en CI
+no hay `.env`. Con esto la suite corre igual en local y en el runner.
 """
+import os
+
+_ENV_DEFAULTS = {
+    "INFLUXDB_TOKEN": "test-token",
+    "INFLUXDB_ADMIN_USER": "test-admin",
+    "INFLUXDB_ADMIN_PASSWORD": "test-password",
+    "INFLUXDB_ORG": "test-org",
+    "INFLUXDB_BUCKET": "test-bucket",
+    "INFLUXDB_RETENTION": "90d",
+    "INFLUXDB_URL": "http://localhost:8086",
+    "MQTT_USER": "test-user",
+    "MQTT_PASSWORD": "test-password",
+    "MQTT_HOST": "localhost",
+    "MQTT_PORT": "1883",
+    "MQTT_TOPIC": "gateway/test",
+    "MQTT_QOS": "1",
+    "MQTT_CLIENT_ID": "gateway-ems-test",
+}
+
+for _key, _value in _ENV_DEFAULTS.items():
+    os.environ.setdefault(_key, _value)
+
 import pytest
 import asyncio
 import tempfile
