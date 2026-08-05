@@ -25,6 +25,7 @@ DISPOSITIVO = "Modbus_DTSU666"
 def _resultado(indice: int) -> DeviceReadResult:
     return DeviceReadResult(
         device_name=f"{DISPOSITIVO}_11",
+        device_section=DISPOSITIVO,
         device_id=11,
         identify_device="bf6a469f-4c2a-4402-9438-49a491ad2238",
         timestamp=datetime.now(timezone.utc),
@@ -112,6 +113,7 @@ async def test_solo_se_publican_los_dispositivos_en_lectura(task_manager):
 
     ajeno = DeviceReadResult(
         device_name="Otro_Equipo_7",
+        device_section="Otro_Equipo",
         device_id=7,
         identify_device="otro-uuid",
         timestamp=datetime.now(timezone.utc),

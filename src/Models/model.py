@@ -38,6 +38,11 @@ class NameParamsModbus(str,Enum):
     count = "count"
     devices = "devices"
     device_name = "device_name"
+    # Sección de config.ini a la que pertenece el dispositivo. Se lleva como
+    # dato propio porque `device_name` incluye el sufijo del esclavo
+    # ("Modbus_DTSU666_11") y deducir la sección partiendo ese nombre sólo
+    # funcionaba con nombres de exactamente dos palabras.
+    device_section = "device_section"
     identify_device = "identify_device"
     device_type = "device_type"
     results = "results"
@@ -80,6 +85,9 @@ class DeviceReadResult:
     success: bool
     device_type: Optional[str] = "Unknown"
     error: str = None
+    # Sección de config.ini del dispositivo, sin el sufijo del esclavo.
+    # `device_name` se mantiene con sufijo porque es el tag de InfluxDB.
+    device_section: Optional[str] = None
     
     
     

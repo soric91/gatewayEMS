@@ -211,10 +211,12 @@ class TaskManager(BaseWatchdog):
                                 results = await self.modbus_app.read_all()
                             
 
+                                # Filtro exacto por sección: los nombres de
+                                # dispositivo vienen de fuera y no se pueden
+                                # deducir partiéndolos por '_'.
                                 filtered_results = [
-                                    r for r in results 
-                                    if any(r.device_name == dev or r.device_name.startswith(f"{dev}_") 
-                                        for dev in self._reading_devices)
+                                    r for r in results
+                                    if r.device_section in self._reading_devices
                                 ]
                                 
                                 if filtered_results:

@@ -132,6 +132,7 @@ class ModbusApp:
                     NameParamsModbus.modbus_map_path:  config.get('mapfile'),
                     NameParamsModbus.device_id:        device_id,
                     NameParamsModbus.device_name:      device_name,
+                    NameParamsModbus.device_section:   device_name,
                 }
 
             factory = ModbusClientFactory(factory_config)
@@ -159,8 +160,9 @@ class ModbusApp:
             for client_key, client_data in self.clients.items():
                 devices = client_data.get(NameParamsModbus.devices, [])
                 for device in devices:
-                    dev_name = device.get(NameParamsModbus.device_name, '')
-                    if dev_name == device_name or dev_name.startswith(f"{device_name}_"):
+                    # Comparación exacta por sección: nada de deducirla del nombre
+                    dev_section = device.get(NameParamsModbus.device_section, '')
+                    if dev_section == device_name:
                         await client_data[NameParamsModbus.client].close()
                         to_remove.append(client_key)
                         break
@@ -184,19 +186,29 @@ class ModbusApp:
             devices = client_data[NameParamsModbus.devices]
             
        
+            # Agrupados por sección: todos los esclavos que comparten mapa se
+            # leen en una sola llamada.
             by_map = {}
             for dev in devices:
-                name = dev.get('device_name', dev['device_name'].split('device_id')[0])
-                by_map.setdefault(name, []).append(dev)
-              
+                section = dev.get(NameParamsModbus.device_section)
+                if not section:
+                    logger.warning(
+                        f"⚠️ Dispositivo sin sección en el cliente {client_key}, "
+                        f"se omite: {dev.get(NameParamsModbus.device_name)}"
+                    )
+                    continue
+                by_map.setdefault(section, []).append(dev)
+
             for device_name, device_list in by_map.items():
-                part_name = device_name.split('_')
-                device_name = f"{part_name[0]}_{part_name[1]}"  
-               
                 device_map = self.device_maps.get(device_name)
                 if not device_map:
+                    logger.warning(
+                        f"⚠️ Sin mapa cargado para '{device_name}': "
+                        f"{len(device_list)} esclavo(s) conectados pero NO se leerán. "
+                        f"Mapas disponibles: {list(self.device_maps.keys())}"
+                    )
                     continue
-                
+
                 addresses, counts = device_map.get_read_params()
                 
                 device_ids = [d[NameParamsModbus.device_id] for d in device_list]
@@ -218,8 +230,9 @@ class ModbusApp:
         
                             results.append(DeviceReadResult(
                                 device_name=dev_entry[NameParamsModbus.device_name],
+                                device_section=device_name,
                                 device_id=dev_entry[NameParamsModbus.device_id],
-                                identify_device=identify_device, 
+                                identify_device=identify_device,
                                 timestamp=timestamp,
                                 device_type=device_type,
                                 data=parsed,
@@ -228,6 +241,7 @@ class ModbusApp:
                         except Exception as e:
                             results.append(DeviceReadResult(
                                 device_name=dev_entry[NameParamsModbus.device_name],
+                                device_section=device_name,
                                 device_id=dev_entry[NameParamsModbus.device_id],
                                 identify_device=identify_device,
                                 timestamp=timestamp,
