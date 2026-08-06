@@ -133,3 +133,6 @@ src/Config/config.ini
 
 # Estado de la configuración remota del CRM (por equipo)
 src/Config/remote/
+
+
+/docs
