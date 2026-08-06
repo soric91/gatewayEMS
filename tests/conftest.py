@@ -15,6 +15,10 @@ _ENV_DEFAULTS = {
     "INFLUXDB_BUCKET": "test-bucket",
     "INFLUXDB_RETENTION": "90d",
     "INFLUXDB_URL": "http://localhost:8086",
+    # Los interruptores se fijan aquí a propósito: si no, un `.env` local con
+    # la réplica encendida cambiaría el resultado de la suite según la máquina.
+    "INFLUXDB_SERVER_ACTIVE": "false",
+    "MQTT_ACTIVE": "true",
     "MQTT_USER": "test-user",
     "MQTT_PASSWORD": "test-password",
     "MQTT_HOST": "localhost",
