@@ -45,11 +45,19 @@ class ModbusApp:
         """Carga configuraciones desde .ini"""
         try:
             devices_str = self.config.get_value('MAINMODBUS', 'devicesnames', fallback='')
-            if not devices_str:
-                logger.error("No hay dispositivos en MAINMODBUS.devicesnames")
-                return False
-            
-            for device_name in [d.strip() for d in devices_str.split(',')]:
+            device_names = [d.strip() for d in devices_str.split(',') if d.strip()]
+
+            if not device_names:
+                # Estado válido, no error: gateway virgen esperando su primera
+                # configuración del CRM. Si esto abortara, el plano de control
+                # nunca arrancaría y no habría forma de aprovisionarlo.
+                logger.warning(
+                    "⚠️ Sin dispositivos en MAINMODBUS.devicesnames: "
+                    "modo aprovisionamiento, esperando configuración del CRM"
+                )
+                return True
+
+            for device_name in device_names:
                 config = self.config.get_section_dict(device_name)
                 if not config:
                     logger.warning(f"Sin config para {device_name}")
@@ -73,6 +81,12 @@ class ModbusApp:
     def _load_maps(self) -> bool:
         """Carga mapas Modbus desde JSON"""
         try:
+            if not self.device_configs:
+                # Sin dispositivos no hay nada que mapear; sigue siendo un
+                # arranque correcto (ver `_load_configs`).
+                logger.info("Sin dispositivos configurados: no hay mapas que cargar")
+                return True
+
             for device_name, config in self.device_configs.items():
                 map_path = config.get('mapfile')
                 if not map_path:

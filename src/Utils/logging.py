@@ -1,5 +1,6 @@
 import logging
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from src.Config.config import ConfigManager
 
 def _setup_logging() -> None:
@@ -18,13 +19,22 @@ def _setup_logging() -> None:
             handlers = []
 
             if logfile:
-                handlers.append(
-                    RotatingFileHandler(
-                        logfile, maxBytes=max_size_bytes, backupCount=backup_count
+                try:
+                    # En un equipo recién clonado el directorio de logs no existe
+                    # (sólo se versionan los .py). Sin esto el handler revienta y
+                    # el proceso se queda SIN logging: basicConfig no se llega a
+                    # llamar y el root logger queda en WARNING sin formato.
+                    Path(logfile).parent.mkdir(parents=True, exist_ok=True)
+                    handlers.append(
+                        RotatingFileHandler(
+                            logfile, maxBytes=max_size_bytes, backupCount=backup_count
+                        )
                     )
-                )
+                except OSError as e:
+                    print(f"No se pudo abrir el fichero de log '{logfile}': {e}")
 
-            if logstdout:
+            if logstdout or not handlers:
+                # Sin fichero, la consola es el único sitio donde mirar.
                 handlers.append(logging.StreamHandler())
 
             logging.basicConfig(
