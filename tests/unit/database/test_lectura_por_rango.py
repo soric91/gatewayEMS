@@ -185,7 +185,30 @@ async def test_la_ventana_es_semiabierta_por_la_derecha():
     await repo.read_points_in_range(AHORA, hasta)
 
     flux = repo._connection.get_query_api().query.await_args.args[0]
-    assert f"range(start: {AHORA.isoformat()}, stop: {hasta.isoformat()})" in flux
+    assert (
+        "range(start: 2026-08-06T12:00:00Z, stop: 2026-08-06T12:15:00Z)" in flux
+    )
+
+
+@pytest.mark.parametrize(
+    "momento, esperado",
+    [
+        (AHORA, "2026-08-06T12:00:00Z"),
+        (AHORA.replace(tzinfo=None), "2026-08-06T12:00:00Z"),
+        (AHORA.astimezone(timezone(timedelta(hours=-5))), "2026-08-06T12:00:00Z"),
+    ],
+)
+def test_los_instantes_se_escriben_en_utc_terminados_en_z(momento, esperado):
+    """
+    Forma canónica de RFC3339, la que usa InfluxDB en toda su documentación.
+
+    Y normaliza la zona: un datetime en hora local consultaría un tramo
+    desplazado cinco horas sin quejarse de nada. La máquina de campo corre en
+    America/Bogota, así que no es un caso hipotético.
+    """
+    from src.Database.repository import rfc3339
+
+    assert rfc3339(momento) == esperado
 
 
 async def test_la_consulta_pivota_para_tener_una_fila_por_lectura():

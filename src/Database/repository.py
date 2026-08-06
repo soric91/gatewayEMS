@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from influxdb_client import Point
 from influxdb_client.client.exceptions import InfluxDBError
@@ -19,6 +19,18 @@ TAGS = ("device_name", "device_id", "device_type", "identify_device")
 COLUMNAS_DE_FLUX = frozenset(
     {"result", "table", "_start", "_stop", "_time", "_measurement"}
 )
+
+
+def rfc3339(momento: datetime) -> str:
+    """
+    Instante en la forma que espera Flux: siempre UTC y terminado en 'Z'.
+
+    Normaliza además la zona horaria: un datetime ingenuo o en hora local
+    consultaría un tramo desplazado sin quejarse de nada.
+    """
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=timezone.utc)
+    return momento.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @dataclass
@@ -84,7 +96,7 @@ class InfluxDBRepository:
 
         flux = f'''
 from(bucket: "{self._connection.bucket}")
-  |> range(start: {desde.isoformat()}, stop: {hasta.isoformat()})
+  |> range(start: {rfc3339(desde)}, stop: {rfc3339(hasta)})
   |> filter(fn: (r) => r._measurement == "{MEASUREMENT}")
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"])
