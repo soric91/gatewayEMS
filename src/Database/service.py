@@ -33,11 +33,25 @@ class ModbusService:
         logger.info("✅ ModbusService inicializado correctamente")
     
     async def save_batch(self, results: List[DeviceReadResult]) -> None:
-        """Procesa y guarda un lote de lecturas."""
+        """Procesa y guarda un lote de lecturas.
+
+        Las lecturas fallidas o sin variables no se guardan: un Point sin
+        fields se serializa a cadena vacía (`to_line_protocol() == ''`), así
+        que sólo aporta líneas en blanco al cuerpo de la petición y ningún
+        dato.
+        """
         try:
-            energy_points = EnergyPoint.batch_from_results(results=results) 
+            guardables = [r for r in results if r.success and r.data]
+
+            descartadas = len(results) - len(guardables)
+            if descartadas:
+                logger.warning(
+                    f"⚠️ {descartadas} lectura(s) sin datos no se guardan en InfluxDB"
+                )
+
+            energy_points = EnergyPoint.batch_from_results(results=guardables)
             influx_points = [point.to_influx_point() for point in energy_points]
-            
+
             if influx_points:
                 await self._repository.save_points(influx_points)
                 logger.info(f"Guardados {len(influx_points)} puntos.")

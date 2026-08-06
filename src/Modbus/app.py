@@ -254,7 +254,18 @@ class ModbusApp:
                             identify_device=self.config.get_value(device_name, NameParamsModbus.identify_device, fallback=f"{device_name}_{device_id}")
                             device_type = self.config.get_value(device_name, NameParamsModbus.device_type, fallback="Unknown")
                             parsed = device_map.parse_raw_data(registers)
-        
+
+                            # Una lectura sin variables no es una lectura buena:
+                            # marcarla como éxito escondía el fallo y publicaba
+                            # un dato vacío como si fuera bueno.
+                            if not parsed:
+                                logger.warning(
+                                    f"⚠️ {device_name} (esclavo {device_id}): "
+                                    f"la lectura no produjo ninguna variable "
+                                    f"({len(registers)} registro(s) recibidos, "
+                                    f"{len(device_map.get_variables_list())} en el mapa)"
+                                )
+
                             results.append(DeviceReadResult(
                                 device_name=dev_entry[NameParamsModbus.device_name],
                                 device_section=device_name,
@@ -263,7 +274,8 @@ class ModbusApp:
                                 timestamp=timestamp,
                                 device_type=device_type,
                                 data=parsed,
-                                success=True
+                                success=bool(parsed),
+                                error=None if parsed else "lectura sin variables",
                             ))
                         except Exception as e:
                             results.append(DeviceReadResult(
