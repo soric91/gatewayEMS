@@ -77,7 +77,12 @@ class TestModbusApp:
         assert app.device_configs["DEVICE_TEST1"]["port"] == "502"
     
     def test_load_configs_no_devices(self, tmp_path):
-        """❌ Sin dispositivos configurados debe fallar"""
+        """✅ Sin dispositivos es un arranque válido: gateway sin aprovisionar
+
+        Ver tests/integration/test_arranque_sin_dispositivos.py: si esto
+        fallara, el plano de control del CRM nunca llegaría a arrancar y no
+        habría forma de mandarle la primera configuración.
+        """
         config_file = tmp_path / "empty_config.ini"
         config_file.write_text("""[DEFAULT]
 loglevel = INFO
@@ -90,9 +95,10 @@ devicesnames =
         app = ModbusApp(config=config)
         
         result = app._load_configs()
-        
-        assert result is False
-    
+
+        assert result is True
+        assert app.device_configs == {}
+
     def test_load_configs_multiple_device_ids(self, tmp_path):
         """✅ Manejo de múltiples device_ids (slaves)"""
         config_file = tmp_path / "config.ini"

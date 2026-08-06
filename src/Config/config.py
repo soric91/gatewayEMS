@@ -33,18 +33,32 @@ class ConfigManager:
     
 
     def __create_default_config(self, path: Path):
-        """Crea un archivo de configuración por defecto si no existe"""
+        """
+        Crea un archivo de configuración por defecto si no existe.
+
+        Es el esqueleto de un gateway sin aprovisionar: sin dispositivos, pero
+        con MAINMODBUS presente para que el arranque llegue al plano de control
+        y el CRM pueda mandar la primera configuración.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
 
         self.config['DEFAULT'] = {
             'loglevel': 'INFO',
             'logstdout': 'True',
-            'logfile': 'src/util/gateway_ems.log',
+            'logfile': 'src/Log/gateway_ems.log',
             'max_size_bytes': '1485760',
-            'backup_count': '5'
+            'backup_count': '5',
+            'sampleslog': 'False'
         }
-        
+
+        self.config['MAINMODBUS'] = {
+            'devicesnames': '',
+            'interval': '1',
+            'start_hour': '0',
+            'stop_hour': '23'
+        }
+
 
         with open(path, 'w') as configfile:
             self.config.write(configfile)

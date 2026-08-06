@@ -11,14 +11,16 @@ async def main():
     
     # Crear TaskManager
     task_manager = TaskManager(ConfigManager())
-    
-    # Inicializar
-    if not await task_manager.initialize():
-        logger.error("No se pudo inicializar")
-        return
-    
-    # Opción 1: Ejecutar todas las tareas (loop infinito)
+
+    # El cierre cubre TAMBIÉN el fallo de initialize(): para entonces ya hay
+    # sesión HTTP de InfluxDB y conexión MQTT abiertas, y salir sin cerrarlas
+    # deja el "Unclosed connector" de aiohttp.
     try:
+        if not await task_manager.initialize():
+            logger.error("No se pudo inicializar")
+            return
+
+        # Ejecutar todas las tareas (loop infinito)
         await task_manager.start_all_tasks()
     except KeyboardInterrupt:
         logger.info("Interrupción detectada")
