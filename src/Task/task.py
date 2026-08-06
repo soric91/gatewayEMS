@@ -7,9 +7,12 @@ from src.Config.config import ConfigManager
 from src.Utils.logging import get_logger
 from src.Utils.utils import QueueManager, MQTTManager
 from src.Core.watchdog import BaseWatchdog
-from src.Models.model import NameParamsModbus
+from src.Models.model import CrmConfigEvent, CrmEvent, NameParamsModbus
 from src.Database.service import ModbusService
 from src.Core.config import settings
+from src.Crm.client import CrmAuthError, CrmClient, CrmError
+from src.Crm.applier import ConfigApplier, ConfigInvalida
+import logging
 
 
 logger = get_logger(__name__)
@@ -40,6 +43,21 @@ class TaskManager(BaseWatchdog):
     # Nombres de los suscriptores del bus de fan-out (uno por sink)
     sub_influx: str = field(init=False, default="influxdb")
     sub_mqtt: str = field(init=False, default="mqtt")
+
+    # Plano de control: aparte del bus de telemetría, y una cola por etapa.
+    # `QueueManager` reparte a TODOS sus suscriptores, que es lo que quiere la
+    # telemetría (cada sink ve todo) y justo lo que no quiere una tubería:
+    # aquí cada mensaje tiene un único destinatario.
+    fetch_queue: QueueManager = field(
+        init=False, default_factory=lambda: QueueManager(maxsize=50)
+    )
+    apply_queue: QueueManager = field(
+        init=False, default_factory=lambda: QueueManager(maxsize=50)
+    )
+    sub_worker: str = field(init=False, default="worker")
+
+    crm_client: Optional[CrmClient] = field(init=False, default=None)
+    config_applier: ConfigApplier = field(init=False, default_factory=ConfigApplier)
 
 
     _tasks: list = field(init=False, default_factory=list)
@@ -139,9 +157,19 @@ class TaskManager(BaseWatchdog):
             # publish() sólo entrega a las colas ya registradas.
             self.queue_manager.subscribe(self.sub_influx)
             self.queue_manager.subscribe(self.sub_mqtt)
+            self.fetch_queue.subscribe(self.sub_worker)
+            self.apply_queue.subscribe(self.sub_worker)
 
             self.mqtt_manager = MQTTManager()
             await self.mqtt_manager.connect()
+
+            # Plano de control del CRM: la suscripción se registra siempre,
+            # y se reaplica sola si el broker se cae.
+            self.crm_client = CrmClient()
+            await self.mqtt_manager.subscribe(settings.MQTT_TOPIC_CONFIG)
+            self.mqtt_manager.on_message(
+                settings.MQTT_TOPIC_CONFIG, self._on_crm_event
+            )
             self.modbus_app = ModbusApp(self.config)
             
             self.modbus_service = ModbusService()
@@ -211,10 +239,12 @@ class TaskManager(BaseWatchdog):
                                 results = await self.modbus_app.read_all()
                             
 
+                                # Filtro exacto por sección: los nombres de
+                                # dispositivo vienen de fuera y no se pueden
+                                # deducir partiéndolos por '_'.
                                 filtered_results = [
-                                    r for r in results 
-                                    if any(r.device_name == dev or r.device_name.startswith(f"{dev}_") 
-                                        for dev in self._reading_devices)
+                                    r for r in results
+                                    if r.device_section in self._reading_devices
                                 ]
                                 
                                 if filtered_results:
@@ -331,7 +361,235 @@ class TaskManager(BaseWatchdog):
 
         except asyncio.CancelledError:
             logger.info("⏹️ Tarea de publicación MQTT cancelada")
-    
+
+    # ==================================================================
+    # Plano de control: configuración remota desde el CRM
+    # ==================================================================
+
+    async def _on_crm_event(self, topic: str, payload) -> None:
+        """
+        Recibe el aviso del CRM. Valida y encola: ni un byte de I/O aquí.
+
+        Corre dentro del bucle de `listen()`, así que hacer aquí la petición
+        HTTP bloquearía la recepción de los mensajes siguientes.
+        """
+        if not isinstance(payload, dict):
+            logger.warning(f"⚠️ Aviso del CRM ilegible en {topic}: {payload!r}")
+            return
+
+        try:
+            evento = CrmConfigEvent.model_validate(payload)
+        except Exception as e:
+            logger.warning(f"⚠️ Aviso del CRM con formato inesperado: {e}")
+            return
+
+        if evento.gateway_uuid != settings.GATEWAY_UUID:
+            logger.warning(
+                f"⚠️ Aviso dirigido a otro gateway ({evento.gateway_uuid}), ignorado"
+            )
+            return
+
+        if evento.event != CrmEvent.config_changed:
+            logger.warning(f"⚠️ Evento del CRM no soportado: '{evento.event}'")
+            return
+
+        logger.info(
+            f"📡 El CRM anuncia configuración nueva "
+            f"(versión {(evento.config_version or '?')[:12]}…)"
+        )
+        await self.fetch_queue.publish(evento.model_dump())
+
+    async def reload_config(self) -> bool:
+        """
+        Recarga config.ini y los mapas sin reiniciar el proceso.
+
+        Al limpiar `prev_values`, el watchdog ve todos los dispositivos como
+        recién cambiados en su siguiente vuelta y los conecta por el camino que
+        ya existe, sin duplicar aquí la lógica de conexión.
+        """
+        logger.info("🔄 Recargando configuración en caliente")
+        try:
+            async with self._read_lock:
+                for device_name in list(self._connected_devices):
+                    await self._disconnect_device(device_name)
+                self._connected_devices.clear()
+                self._reading_devices.clear()
+
+                self.config.reload()
+
+                self.modbus_app.device_configs.clear()
+                self.modbus_app.device_maps.clear()
+                self.modbus_app.clients = {}
+
+                if not self.modbus_app._load_configs():
+                    logger.error("❌ Recarga: no se pudieron cargar las configs")
+                    return False
+
+                if not self.modbus_app._load_maps():
+                    logger.error("❌ Recarga: no se pudieron cargar los mapas")
+                    return False
+
+                self.interval = int(self.config.get_value('MAINMODBUS', 'interval', 1))
+                self.start_hour = int(self.config.get_value('MAINMODBUS', 'start_hour', 0))
+                self.stop_hour = int(self.config.get_value('MAINMODBUS', 'stop_hour', 23))
+
+                nivel = self.config.get_value('DEFAULT', 'loglevel', fallback='INFO')
+                logging.getLogger().setLevel(
+                    getattr(logging, str(nivel).upper(), logging.INFO)
+                )
+
+                # Fuerza al watchdog a reevaluar y reconectar todo
+                self.prev_values.clear()
+
+            logger.info(
+                f"✅ Configuración recargada: "
+                f"{list(self.modbus_app.device_configs.keys())}, "
+                f"intervalo={self.interval}s"
+            )
+            return True
+
+        except Exception as e:
+            logger.exception(f"❌ Error recargando configuración: {e}")
+            return False
+
+    async def task_fetch_config(self):
+        """Descarga la configuración cuando el CRM avisa (o el heartbeat lo pide)."""
+        logger.info("📥 Tarea de descarga de configuración iniciada")
+        try:
+            while self._running:
+                evento = await self.fetch_queue.consume(self.sub_worker)
+
+                try:
+                    estado = self.config_applier.load_state()
+                    anunciada = (evento or {}).get("config_version")
+
+                    if anunciada and anunciada == estado.get("applied_version"):
+                        logger.info(
+                            "✅ La versión anunciada ya está aplicada, nada que hacer"
+                        )
+                        continue
+
+                    config, etag = await self.crm_client.get_config(estado.get("etag"))
+                    if config is None:
+                        continue
+
+                    await self.apply_queue.publish({"config": config, "etag": etag})
+
+                except CrmAuthError as e:
+                    logger.critical(
+                        f"🔒 Credencial del gateway rechazada: {e}. "
+                        f"El CRM tiene que emitir una nueva."
+                    )
+                except CrmError as e:
+                    logger.error(f"❌ Error descargando la configuración: {e}")
+                except Exception as e:
+                    logger.exception(f"❌ Error inesperado descargando configuración: {e}")
+
+        except asyncio.CancelledError:
+            logger.info("⏹️ Tarea de descarga de configuración cancelada")
+
+    async def task_apply_config(self):
+        """Escribe la configuración, recarga y avisa al CRM."""
+        logger.info("🛠️ Tarea de aplicación de configuración iniciada")
+        try:
+            while self._running:
+                mensaje = await self.apply_queue.consume(self.sub_worker)
+                config = (mensaje or {}).get("config")
+                if config is None:
+                    continue
+
+                try:
+                    self.config_applier.apply(config)
+
+                except ConfigInvalida as e:
+                    # No se escribió nada: la configuración vigente sigue viva.
+                    logger.error(f"❌ Configuración rechazada, no se aplicó: {e}")
+                    await self._publicar_estado(error=f"config_invalida: {e}")
+                    continue
+
+                except Exception as e:
+                    logger.exception(f"❌ Error escribiendo la configuración: {e}")
+                    await self._publicar_estado(error=f"escritura: {e}")
+                    continue
+
+                if not await self.reload_config():
+                    logger.error("❌ La recarga falló, volviendo a la configuración anterior")
+                    if self.config_applier.rollback():
+                        await self.reload_config()
+                    await self._publicar_estado(error="reload_fallido")
+                    continue
+
+                self.config_applier.mark_applied(config, mensaje.get("etag"))
+
+                try:
+                    await self.crm_client.acknowledge(config.config_version)
+                except CrmError as e:
+                    # La configuración está viva; sólo el CRM no se enteró.
+                    logger.error(f"❌ No se pudo confirmar la configuración al CRM: {e}")
+
+                await self._publicar_estado()
+
+        except asyncio.CancelledError:
+            logger.info("⏹️ Tarea de aplicación de configuración cancelada")
+
+    async def task_heartbeat(self):
+        """
+        Reporta presencia al CRM y pregunta si hay trabajo.
+
+        Es el camino que funciona con el broker caído: el aviso MQTT acelera,
+        esto garantiza.
+        """
+        intervalo = settings.CRM_HEARTBEAT_SECONDS
+        logger.info(f"💓 Tarea de heartbeat iniciada (cada {intervalo}s)")
+        try:
+            while self._running:
+                try:
+                    respuesta = await self.crm_client.heartbeat()
+                    estado = self.config_applier.load_state()
+
+                    if respuesta.get("config_habilitada") and respuesta.get(
+                        "config_version_actual"
+                    ) != estado.get("applied_version"):
+                        logger.info("📡 El CRM tiene configuración pendiente")
+                        await self.fetch_queue.publish(
+                            {
+                                "event": str(CrmEvent.config_changed),
+                                "gateway_uuid": settings.GATEWAY_UUID,
+                                "config_version": respuesta.get("config_version_actual"),
+                            }
+                        )
+
+                except CrmAuthError as e:
+                    logger.critical(f"🔒 Credencial rechazada en el heartbeat: {e}")
+                except Exception as e:
+                    logger.error(f"❌ Heartbeat fallido: {e}")
+
+                await asyncio.sleep(intervalo)
+
+        except asyncio.CancelledError:
+            logger.info("⏹️ Tarea de heartbeat cancelada")
+
+    async def _publicar_estado(self, error: Optional[str] = None) -> None:
+        """Publica el estado del gateway en el topic de presencia del CRM."""
+        if not self.mqtt_manager:
+            return
+
+        payload = {
+            "gateway_uuid": settings.GATEWAY_UUID,
+            "config_version_aplicada": self.config_applier.load_state().get(
+                "applied_version"
+            ),
+            "dispositivos_conectados": sorted(self._connected_devices),
+            "dispositivos_leyendo": sorted(self._reading_devices),
+        }
+        if error:
+            payload["error"] = error
+
+        try:
+            await self.mqtt_manager.publish(settings.MQTT_TOPIC_STATUS, payload)
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudo publicar el estado: {e}")
+
     async def start_all_tasks(self):
         """Inicia todas las tareas configuradas"""
         if self._running:
@@ -352,9 +610,37 @@ class TaskManager(BaseWatchdog):
             ),
             asyncio.create_task(
                 self.task_publish_mqtt(),
-                name="publish_mqtt" 
+                name="publish_mqtt"
             ),
         ]
+
+        # El plano de control sólo arranca si sus piezas existen: sin MQTT ni
+        # cliente del CRM, el gateway sigue leyendo y guardando con la
+        # configuración local, que es lo que no puede dejar de funcionar.
+        if self.mqtt_manager and self.crm_client:
+            self._tasks += [
+                asyncio.create_task(
+                    self.mqtt_manager.listen(),
+                    name="listen_mqtt"
+                ),
+                asyncio.create_task(
+                    self.task_fetch_config(),
+                    name="fetch_config"
+                ),
+                asyncio.create_task(
+                    self.task_apply_config(),
+                    name="apply_config"
+                ),
+                asyncio.create_task(
+                    self.task_heartbeat(),
+                    name="heartbeat"
+                ),
+            ]
+        else:
+            logger.warning(
+                "⚠️ Sin MQTT o sin cliente del CRM: el gateway funciona con la "
+                "configuración local, sin plano de control remoto"
+            )
         
         try:
             await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -381,7 +667,14 @@ class TaskManager(BaseWatchdog):
         
         await asyncio.gather(*self._tasks, return_exceptions=True)
 
+        if self.crm_client:
+            try:
+                await self.crm_client.close()
+                logger.info("✅ Sesión HTTP del CRM cerrada")
+            except Exception as e:
+                logger.error(f"❌ Error cerrando la sesión del CRM: {e}")
+
         if self.modbus_app:
             await self.modbus_app.shutdown()
-        
+
         logger.info("✅ Todas las tareas detenidas")

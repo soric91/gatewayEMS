@@ -24,6 +24,10 @@ _ENV_DEFAULTS = {
     "MQTT_QOS": "1",
     "MQTT_CLIENT_ID": "gateway-ems-test",
     "GATEWAY_UUID": "00000000-0000-0000-0000-000000000000",
+    "CRM_API_URL": "http://localhost:8000/api/v1",
+    "GATEWAY_CREDENTIAL": "test-credential",
+    "CRM_HEARTBEAT_SECONDS": "60",
+    "CRM_HTTP_TIMEOUT": "5",
 }
 
 for _key, _value in _ENV_DEFAULTS.items():

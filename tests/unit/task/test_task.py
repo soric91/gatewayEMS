@@ -304,7 +304,8 @@ async def test_task_read_modbus_periodic_reads_devices(task_manager, mock_modbus
     
     # Mock successful read result
     mock_result = DeviceReadResult(
-        device_name="device1",
+        device_name="device1_1",
+        device_section="device1",
         device_id="1",
         identify_device="device1_1",
         timestamp="2024-03-28T12:00:00Z",
@@ -336,7 +337,8 @@ async def test_task_read_modbus_periodic_publishes_to_queue(task_manager, mock_m
     task_manager.queue_manager.publish = AsyncMock()
     
     mock_result = DeviceReadResult(
-        device_name="device1",
+        device_name="device1_1",
+        device_section="device1",
         device_id="1",
         identify_device="device1_1",
         timestamp="2024-03-28T12:00:00Z",

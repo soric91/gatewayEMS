@@ -149,6 +149,12 @@ class ModbusClientFactory:
 
         return {
             NameParamsModbus.device_name: device_name,
+            # Sección de config.ini: viene en el propio config del dispositivo.
+            # `device_name` es la clave del factory_config e incluye el sufijo
+            # del esclavo, así que no sirve para localizar el mapa.
+            NameParamsModbus.device_section: device_config.get(
+                NameParamsModbus.device_section
+            ),
             NameParamsModbus.device_id: device_config.get(NameParamsModbus.device_id),
             NameParamsModbus.modbus_function: device_config.get(NameParamsModbus.modbus_function),
             NameParamsModbus.modbus_map_path: device_config.get(NameParamsModbus.modbus_map_path),

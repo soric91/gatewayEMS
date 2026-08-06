@@ -173,6 +173,7 @@ port = 502
                 NameParamsModbus.client: mock_client,
                 NameParamsModbus.devices: [{
                     NameParamsModbus.device_name: "DEVICE_TEST1_1",
+                    NameParamsModbus.device_section: "DEVICE_TEST1",
                     NameParamsModbus.device_id: 1
                 }]
             }
@@ -212,7 +213,8 @@ port = 502
             "192.168.1.100": {
                 NameParamsModbus.client: mock_client,
                 NameParamsModbus.devices: [{
-                    NameParamsModbus.device_name: "DEVICE_TEST1_1"
+                    NameParamsModbus.device_name: "DEVICE_TEST1_1",
+                    NameParamsModbus.device_section: "DEVICE_TEST1"
                 }]
             }
         }
@@ -249,6 +251,7 @@ port = 502
                 NameParamsModbus.client: mock_client,
                 NameParamsModbus.devices: [{
                     NameParamsModbus.device_name: "DEVICE_TEST1_1",
+                    NameParamsModbus.device_section: "DEVICE_TEST1",
                     NameParamsModbus.device_id: 1,
                     "modbus_function": 3
                 }]

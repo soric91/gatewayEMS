@@ -1,7 +1,8 @@
 from time import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, Union, List
 from enum import Enum
 from influxdb_client import Point
@@ -38,6 +39,11 @@ class NameParamsModbus(str,Enum):
     count = "count"
     devices = "devices"
     device_name = "device_name"
+    # Sección de config.ini a la que pertenece el dispositivo. Se lleva como
+    # dato propio porque `device_name` incluye el sufijo del esclavo
+    # ("Modbus_DTSU666_11") y deducir la sección partiendo ese nombre sólo
+    # funcionaba con nombres de exactamente dos palabras.
+    device_section = "device_section"
     identify_device = "identify_device"
     device_type = "device_type"
     results = "results"
@@ -80,6 +86,9 @@ class DeviceReadResult:
     success: bool
     device_type: Optional[str] = "Unknown"
     error: str = None
+    # Sección de config.ini del dispositivo, sin el sufijo del esclavo.
+    # `device_name` se mantiene con sufijo porque es el tag de InfluxDB.
+    device_section: Optional[str] = None
     
     
     
@@ -240,3 +249,94 @@ class EnergyPoint:
             f"measurements_count={len(self.measurements)}, "
             f"success={self.success})"
         )
+
+# ============================================================================
+# CRM - configuración remota
+#
+# Espejo del contrato del backend (app/schemas/gateway_config.py). Todos los
+# modelos ignoran campos desconocidos: cuando el CRM añada algo que este
+# gateway todavía no sabe usar, se descarta en silencio en vez de romper.
+# ============================================================================
+
+
+class CrmEvent(str, Enum):
+    """Eventos que el CRM publica en el topic de configuración."""
+    config_changed = "config_changed"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class CrmConfigEvent(BaseModel):
+    """Aviso MQTT del CRM. No trae configuración, sólo la señal."""
+    model_config = ConfigDict(extra="ignore")
+
+    event: str
+    gateway_uuid: str
+    config_version: Optional[str] = None
+
+
+class RemoteVariable(BaseModel):
+    """Una variable del mapa Modbus, tal como la manda el CRM."""
+    model_config = ConfigDict(extra="ignore")
+
+    address: str                      # hex: "0x2006"
+    data_type: str                    # carácter de struct: f, h, H, i, I
+    gain: str
+    register_type: str                # "holding" | "input"
+    unit: Optional[str] = None        # no lo usa el firmware; se conserva
+
+
+class RemoteDevice(BaseModel):
+    """Un dispositivo: acaba siendo una sección de config.ini y su mapa."""
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    identify_device: str
+    device_type: str
+    protocol: str
+
+    serialport: Optional[str] = None
+    baudrate: Optional[int] = None
+    # Reconocidos para poder avisar si difieren de 8N1: el cliente Modbus sólo
+    # abre el puerto con port y baudrate, así que hoy se ignoran.
+    parity: Optional[str] = None
+    bytesize: Optional[int] = None
+    stopbits: Optional[int] = None
+
+    host: Optional[str] = None
+    port: Optional[int] = None
+
+    device_id: int
+    modbusconnect: bool
+    modbusread: bool
+    blockreading: bool
+    map: Dict[str, RemoteVariable] = Field(default_factory=dict)
+
+
+class RemoteLog(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    loglevel: str
+
+
+class RemoteMainModbus(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    interval: int
+    start_hour: int
+    stop_hour: int
+
+
+class RemoteConfig(BaseModel):
+    """El documento completo que devuelve GET /gateway/{uuid}/config."""
+    model_config = ConfigDict(extra="ignore")
+
+    gateway_uuid: str
+    config_version: str
+    log: RemoteLog
+    mainmodbus: RemoteMainModbus
+    devices: List[RemoteDevice] = Field(default_factory=list)
+
+    # Informativos: el gateway no los usa para configurarse.
+    numero_serie: Optional[str] = None
+    firmware_version: Optional[str] = None
+    generated_at: Optional[datetime] = None

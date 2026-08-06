@@ -130,3 +130,9 @@ GITHUB_CHECKLIST.md
 # runtime por el watchdog. Se versiona la plantilla, no el estado.
 src/Config/config.ini
 !src/Config/config.example.ini
+
+# Estado de la configuración remota del CRM (por equipo)
+src/Config/remote/
+
+
+/docs
