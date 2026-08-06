@@ -164,6 +164,46 @@ async def test_publicar_el_estado_no_revienta_sin_mqtt(montar, monkeypatch):
 # Encendido: todo como siempre
 # ---------------------------------------------------------------------------
 
+async def test_la_replica_al_servidor_funciona_en_modo_autonomo(montar, monkeypatch):
+    """
+    Va por HTTP contra InfluxDB, no por MQTT.
+
+    Un gateway sin broker tiene que poder seguir subiendo al servidor central:
+    son dos interruptores independientes y no deben acabar enredados.
+    """
+    monkeypatch.setattr(settings, "INFLUXDB_SERVER_ACTIVE", True)
+    tm, _, _ = montar(False, monkeypatch)
+    assert await tm.initialize() is True
+
+    assert tm.replicator is not None
+
+    arranque = asyncio.create_task(tm.start_all_tasks())
+    await asyncio.sleep(0.1)
+
+    assert {t.get_name() for t in tm._tasks} == TAREAS_AUTONOMO | {"replicar_servidor"}
+
+    await tm.stop_all_tasks()
+    arranque.cancel()
+    await asyncio.gather(arranque, return_exceptions=True)
+
+
+async def test_sin_la_replica_no_se_crea_ni_la_tarea_ni_el_replicador(montar, monkeypatch):
+    monkeypatch.setattr(settings, "INFLUXDB_SERVER_ACTIVE", False)
+    tm, _, _ = montar(False, monkeypatch)
+    assert await tm.initialize() is True
+
+    assert tm.replicator is None
+
+    arranque = asyncio.create_task(tm.start_all_tasks())
+    await asyncio.sleep(0.1)
+
+    assert "replicar_servidor" not in {t.get_name() for t in tm._tasks}
+
+    await tm.stop_all_tasks()
+    arranque.cancel()
+    await asyncio.gather(arranque, return_exceptions=True)
+
+
 async def test_con_mqtt_activo_arranca_todo_como_antes(montar, monkeypatch):
     """El valor por defecto no cambia el comportamiento de hoy."""
     tm, mqtt_cls, crm_cls = montar(True, monkeypatch)
