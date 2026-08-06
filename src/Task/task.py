@@ -343,7 +343,6 @@ class TaskManager(BaseWatchdog):
                 try:
                    
                     results = data.get(NameParamsModbus.results, [])
-                    topic_modbus_data= settings.MQTT_TOPIC_TLM
                     if not results:
                         logger.warning("⚠️ Recibido dato sin resultados en la cola")
                         continue
@@ -351,8 +350,14 @@ class TaskManager(BaseWatchdog):
                     if not self.mqtt_manager:
                         logger.error("❌ MQTTManager no inicializado, no se puede publicar")
                         continue
+                    # Un topic por equipo: quien escucha se suscribe al suyo.
                     for result in results:
-                        await self.mqtt_manager.publish(topic_modbus_data, result)
+                        await self.mqtt_manager.publish(
+                            settings.topic_telemetria(
+                                result.device_id, result.identify_device
+                            ),
+                            result,
+                        )
 
                     logger.info(f"✅ Lote publicado por MQTT ({len(results)} lecturas)")
 

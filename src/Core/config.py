@@ -46,5 +46,37 @@ class Settings(BaseSettings):
         """Donde este gateway reporta su presencia al CRM."""
         return f"{self.MQTT_TOPIC_CRM.rstrip('/')}/{self.GATEWAY_UUID}/status"
 
+    def topic_telemetria(self, device_id, identify_device) -> str:
+        """
+        Topic de telemetría de UN equipo: `<base>/<device_id>/<uuid>`.
+
+        Un topic por equipo para que quien escuche pueda quedarse sólo con el
+        suyo. Con todo en un topic único había que recibir las lecturas de
+        todos los equipos y filtrarlas en el cliente.
+
+        Comodines útiles para el que consume:
+            <base>/+/<uuid>   un equipo, sea cual sea su esclavo
+            <base>/74/+       el esclavo 74
+            <base>/#          todo
+        """
+        return (
+            f"{self.MQTT_TOPIC_TLM.rstrip('/')}"
+            f"/{self._segmento(device_id)}/{self._segmento(identify_device)}"
+        )
+
+    @staticmethod
+    def _segmento(valor) -> str:
+        """
+        Deja un valor listo para ser UN nivel del topic.
+
+        `/`, `+` y `#` cambiarían la estructura o convertirían el topic en un
+        filtro: se sustituyen. Un valor vacío pasa a 'desconocido' para no
+        generar un nivel vacío, que el broker sí acepta pero nadie espera.
+        """
+        texto = "" if valor is None else str(valor).strip()
+        for prohibido in ("/", "+", "#"):
+            texto = texto.replace(prohibido, "_")
+        return texto or "desconocido"
+
 
 settings = Settings()

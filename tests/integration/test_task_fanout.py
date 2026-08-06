@@ -100,8 +100,11 @@ async def test_cada_lote_llega_a_influxdb_y_a_mqtt(task_manager):
     lotes_influx = [c.args[0][0].data for c in tm.modbus_service.save_batch.await_args_list]
     # publish(topic, payload): el payload es el segundo argumento
     lotes_mqtt = [c.args[1].data for c in tm.mqtt_manager.publish.await_args_list]
+    # Un topic por equipo: <base>/<device_id>/<identify_device>
     topics = {c.args[0] for c in tm.mqtt_manager.publish.await_args_list}
-    assert topics == {settings.MQTT_TOPIC_TLM}
+    assert topics == {
+        f"{settings.MQTT_TOPIC_TLM}/11/bf6a469f-4c2a-4402-9438-49a491ad2238"
+    }
     assert lotes_influx == lotes_mqtt
     assert len(lotes_influx) == LOTES
 
@@ -145,6 +148,50 @@ async def test_solo_se_publican_los_dispositivos_en_lectura(task_manager):
     guardados = tm.modbus_service.save_batch.await_args_list[0].args[0]
     assert [r.device_name for r in guardados] == [f"{DISPOSITIVO}_11"]
     assert tm.mqtt_manager.publish.await_count == 1
+
+
+async def test_cada_equipo_publica_en_su_propio_topic(task_manager):
+    """Dos equipos leídos a la vez no pueden acabar en el mismo topic."""
+    tm = task_manager
+    tm._reading_devices = {DISPOSITIVO, "Otro_Equipo"}
+    lecturas = 0
+
+    otro = DeviceReadResult(
+        device_name="Otro_Equipo_7",
+        device_section="Otro_Equipo",
+        device_id=7,
+        identify_device="7d8704bd-5fe0-4686-972e-a71febc718d7",
+        timestamp=datetime.now(timezone.utc),
+        data={"VOLTAGE_A": 1.0},
+        success=True,
+        device_type="Inverter",
+    )
+
+    async def fake_read_all():
+        nonlocal lecturas
+        lecturas += 1
+        if lecturas > 1:
+            tm._running = False
+            return []
+        return [_resultado(1), otro]
+
+    tm.modbus_app.read_all = fake_read_all
+    tm._running = True
+
+    lectura = asyncio.create_task(tm.task_read_modbus_periodic())
+    consumidores = [
+        asyncio.create_task(tm.task_process_queue()),
+        asyncio.create_task(tm.task_publish_mqtt()),
+    ]
+
+    await asyncio.wait_for(lectura, timeout=5)
+    await _drenar_y_parar(tm, consumidores)
+
+    topics = {c.args[0] for c in tm.mqtt_manager.publish.await_args_list}
+    assert topics == {
+        f"{settings.MQTT_TOPIC_TLM}/11/bf6a469f-4c2a-4402-9438-49a491ad2238",
+        f"{settings.MQTT_TOPIC_TLM}/7/7d8704bd-5fe0-4686-972e-a71febc718d7",
+    }
 
 
 async def test_fuera_de_horario_no_publica_nada(task_manager):
