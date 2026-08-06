@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Any
 from datetime import datetime, timezone
 from src.Config.config import ConfigManager
-from src.Modbus.client import ModbusClientFactory
+from src.Modbus.client import ModbusClientFactory, cerrar_cliente
 from src.Modbus.modbusmap import ModbusDeviceMap
 from src.Modbus.read import read_registers
 from src.Models.model import NameParamsModbus, DeviceReadResult
@@ -173,13 +173,26 @@ class ModbusApp:
 
             for client_key, client_data in self.clients.items():
                 devices = client_data.get(NameParamsModbus.devices, [])
-                for device in devices:
-                    # Comparación exacta por sección: nada de deducirla del nombre
-                    dev_section = device.get(NameParamsModbus.device_section, '')
-                    if dev_section == device_name:
-                        await client_data[NameParamsModbus.client].close()
-                        to_remove.append(client_key)
-                        break
+                # Comparación exacta por sección: nada de deducirla del nombre
+                if not any(
+                    device.get(NameParamsModbus.device_section, '') == device_name
+                    for device in devices
+                ):
+                    continue
+
+                # Se descarta pase lo que pase al cerrar: un cliente que no se
+                # pudo cerrar y además se queda en el diccionario es lo peor de
+                # los dos mundos.
+                to_remove.append(client_key)
+
+                client = client_data.get(NameParamsModbus.client)
+                if client is None:
+                    continue
+
+                try:
+                    await cerrar_cliente(client)
+                except Exception as e:
+                    logger.error(f"❌ No se pudo cerrar el cliente {client_key}: {e}")
 
             for key in to_remove:
                 del self.clients[key]
@@ -274,5 +287,14 @@ class ModbusApp:
     async def shutdown(self):
         """Cierra todas las conexiones"""
         logger.info("🛑 Cerrando conexiones")
-        for client_data in self.clients.values():
-            await client_data[NameParamsModbus.client].close()
+        for client_key, client_data in self.clients.items():
+            client = client_data.get(NameParamsModbus.client)
+            if client is None:
+                continue
+            try:
+                await cerrar_cliente(client)
+            except Exception as e:
+                # Un cliente que no cierra no puede impedir que cierren los demás
+                logger.error(f"❌ No se pudo cerrar el cliente {client_key}: {e}")
+
+        self.clients.clear()

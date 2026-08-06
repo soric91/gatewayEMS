@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from dataclasses import dataclass, field
 from typing import Any, Dict, Union, Optional, Set
 from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
@@ -7,6 +8,22 @@ from src.Models.model import NameParamsModbus, ProtocolCom
 from src.Utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+async def cerrar_cliente(client) -> None:
+    """
+    Cierra un cliente pymodbus, tenga `close()` síncrono o corrutina.
+
+    En pymodbus 3.12 `ModbusBaseClient.close()` devuelve None, así que hacerle
+    `await` lanza `TypeError: object NoneType can't be used in 'await'
+    expression` y la conexión se queda abierta: el puerto serie sigue
+    ocupado y el siguiente intento de conexión abre un segundo handle sobre
+    el mismo RS485. Esperar sólo lo que es esperable funciona con las dos
+    formas, y sobrevive a que pymodbus cambie de opinión.
+    """
+    resultado = client.close()
+    if inspect.isawaitable(resultado):
+        await resultado
 
 
 @dataclass
@@ -164,7 +181,7 @@ class ModbusClientFactory:
         """Cierra conexión de un cliente individual."""
         if client:
             try:
-                await client.close()
+                await cerrar_cliente(client)
                 logger.debug("Conexión de cliente cerrada correctamente")
             except Exception as e:
                 logger.error(f"No se pudo cerrar la conexión: {e}")
