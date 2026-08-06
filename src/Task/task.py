@@ -156,20 +156,35 @@ class TaskManager(BaseWatchdog):
             # Registrar los suscriptores ANTES de que empiece a publicarse:
             # publish() sólo entrega a las colas ya registradas.
             self.queue_manager.subscribe(self.sub_influx)
-            self.queue_manager.subscribe(self.sub_mqtt)
             self.fetch_queue.subscribe(self.sub_worker)
             self.apply_queue.subscribe(self.sub_worker)
 
-            self.mqtt_manager = MQTTManager()
-            await self.mqtt_manager.connect()
+            if settings.MQTT_ACTIVE:
+                # El suscriptor de MQTT se registra sólo si alguien va a
+                # consumirlo. Una cola sin consumidor se llena hasta el tope y
+                # a partir de ahí descarta un lote (y avisa por log) en cada
+                # lectura, para nada.
+                self.queue_manager.subscribe(self.sub_mqtt)
 
-            # Plano de control del CRM: la suscripción se registra siempre,
-            # y se reaplica sola si el broker se cae.
-            self.crm_client = CrmClient()
-            await self.mqtt_manager.subscribe(settings.MQTT_TOPIC_CONFIG)
-            self.mqtt_manager.on_message(
-                settings.MQTT_TOPIC_CONFIG, self._on_crm_event
-            )
+                self.mqtt_manager = MQTTManager()
+                await self.mqtt_manager.connect()
+
+                # Plano de control del CRM: la suscripción se registra siempre,
+                # y se reaplica sola si el broker se cae.
+                self.crm_client = CrmClient()
+                await self.mqtt_manager.subscribe(settings.MQTT_TOPIC_CONFIG)
+                self.mqtt_manager.on_message(
+                    settings.MQTT_TOPIC_CONFIG, self._on_crm_event
+                )
+            else:
+                # Modo autónomo: leer y guardar en local, nada más. Ni broker
+                # ni CRM, así que este gateway se configura únicamente por su
+                # config.ini hasta que se vuelva a encender MQTT_ACTIVE.
+                logger.info(
+                    "🔕 MQTT_ACTIVE=false: modo autónomo. Sin publicación, sin "
+                    "CRM y sin heartbeat; la configuración sale sólo de config.ini"
+                )
+
             self.modbus_app = ModbusApp(self.config)
             
             self.modbus_service = ModbusService()
@@ -610,12 +625,8 @@ class TaskManager(BaseWatchdog):
                 name="read_modbus"
             ),
             asyncio.create_task(
-                self.task_process_queue(), 
+                self.task_process_queue(),
                 name="process_queue"
-            ),
-            asyncio.create_task(
-                self.task_publish_mqtt(),
-                name="publish_mqtt"
             ),
         ]
 
@@ -624,6 +635,10 @@ class TaskManager(BaseWatchdog):
         # configuración local, que es lo que no puede dejar de funcionar.
         if self.mqtt_manager and self.crm_client:
             self._tasks += [
+                asyncio.create_task(
+                    self.task_publish_mqtt(),
+                    name="publish_mqtt"
+                ),
                 asyncio.create_task(
                     self.mqtt_manager.listen(),
                     name="listen_mqtt"
@@ -641,6 +656,11 @@ class TaskManager(BaseWatchdog):
                     name="heartbeat"
                 ),
             ]
+        elif not settings.MQTT_ACTIVE:
+            # Apagado a propósito: no es una avería, no se avisa como tal.
+            logger.info(
+                "🔕 Modo autónomo: sólo lectura Modbus y guardado local"
+            )
         else:
             logger.warning(
                 "⚠️ Sin MQTT o sin cliente del CRM: el gateway funciona con la "
