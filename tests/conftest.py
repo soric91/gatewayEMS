@@ -19,6 +19,7 @@ _ENV_DEFAULTS = {
     # la réplica encendida cambiaría el resultado de la suite según la máquina.
     "INFLUXDB_SERVER_ACTIVE": "false",
     "MQTT_ACTIVE": "true",
+    "MQTT_USE_TLS": "false",
     "MQTT_USER": "test-user",
     "MQTT_PASSWORD": "test-password",
     "MQTT_HOST": "localhost",

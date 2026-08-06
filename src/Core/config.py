@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # de config.ini, porque el aprovisionamiento remoto viaja por ahí.
     MQTT_ACTIVE: bool = True
 
+    # Con True el cliente habla TLS. Sin esto, contra un listener TLS el
+    # gateway manda su CONNECT en claro, mosquitto espera un ClientHello que no
+    # llega, y los dos se quedan esperando hasta el timeout: "timed out", sin
+    # una sola pista de que el problema era el cifrado.
+    MQTT_USE_TLS: bool = False
+
     MQTT_USER: str
     MQTT_PASSWORD: str
     MQTT_HOST: str
