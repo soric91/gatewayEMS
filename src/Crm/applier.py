@@ -23,7 +23,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.Models.model import DATATYPE, ProtocolCom, RemoteConfig, RemoteDevice
+from src.Models.model import (
+    DATATYPE,
+    NameParamsModbus,
+    ProtocolCom,
+    RemoteConfig,
+    RemoteDevice,
+)
 from src.Utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -37,6 +43,47 @@ FUNCION_POR_REGISTRO = {"holding": 3, "input": 4}
 
 # El cliente Modbus abre el puerto serie sólo con port y baudrate: 8N1 fijo.
 SERIE_ASUMIDA = {"parity": "N", "bytesize": 8, "stopbits": 1}
+
+# Dirección Modbus máxima direccionable (16 bits).
+DIRECCION_MAXIMA = 0xFFFF
+
+
+def normalizar_nombre(nombre: str) -> str:
+    """
+    Nombre de variable listo para usarse como clave del mapa.
+
+    Los espacios pasan a `_`: la clave acaba siendo nombre de field en InfluxDB
+    y clave del JSON que se publica por MQTT, y ahí un espacio obliga a
+    escaparlo en cada consulta. El CRM deja escribir "Voltaje A", así que la
+    traducción se hace aquí, al escribir el mapa.
+    """
+    return "_".join(str(nombre).split())
+
+
+def parse_direccion(texto) -> int:
+    """
+    Dirección numérica a partir de lo que manda el CRM.
+
+    El CRM escribe la dirección en la base en la que la escribió el operador
+    (`app/domain/firmware.py`): hex sale como `0x2006`, decimal como `42514`.
+    `ModbusDeviceMap` interpreta el mapa SIEMPRE en base 16, así que un `42514`
+    decimal copiado tal cual se leería como 0x42514 y el gateway pediría otro
+    registro. Por eso aquí se resuelve la base y el mapa se escribe siempre en
+    hexadecimal.
+
+    :raises ValueError: si no es una dirección Modbus válida.
+    """
+    limpio = str(texto).strip().lower()
+    if not limpio:
+        raise ValueError("dirección vacía")
+
+    valor = int(limpio, 16) if limpio.startswith("0x") else int(limpio, 10)
+
+    if not 0 <= valor <= DIRECCION_MAXIMA:
+        raise ValueError(
+            f"dirección {valor} fuera del rango Modbus (0..{DIRECCION_MAXIMA})"
+        )
+    return valor
 
 
 class ConfigInvalida(Exception):
@@ -140,13 +187,27 @@ class ConfigApplier:
                 f"el gateway usa una única función Modbus por dispositivo"
             )
 
+        # Los nombres se normalizan al escribir el mapa; dos que colisionen
+        # dejarían una sola variable y la lectura perdida sin explicación.
+        normalizados: Dict[str, str] = {}
+        for nombre in device.map:
+            clave = normalizar_nombre(nombre)
+            if not clave:
+                raise ConfigInvalida(f"{etiqueta}: nombre de variable vacío")
+            if clave in normalizados:
+                raise ConfigInvalida(
+                    f"{etiqueta}: '{nombre}' y '{normalizados[clave]}' quedan "
+                    f"como la misma variable '{clave}'"
+                )
+            normalizados[clave] = nombre
+
         for nombre, variable in device.map.items():
             try:
-                int(variable.address, 16)
-            except (ValueError, TypeError):
+                parse_direccion(variable.address)
+            except (ValueError, TypeError) as e:
                 raise ConfigInvalida(
-                    f"{etiqueta}, variable '{nombre}': dirección no hexadecimal "
-                    f"'{variable.address}'"
+                    f"{etiqueta}, variable '{nombre}': dirección inválida "
+                    f"'{variable.address}' ({e})"
                 ) from None
 
             try:
@@ -244,14 +305,25 @@ class ConfigApplier:
         """
         Mapa en el formato de `src/Modbus/maps/*.json`.
 
+        Dos traducciones respecto a lo que manda el CRM:
+
+        - las claves van sin espacios (`Voltaje A` -> `Voltaje_A`), porque
+          acaban siendo nombres de field en InfluxDB y claves del JSON de MQTT;
+        - la dirección se escribe siempre en hexadecimal, que es como la lee
+          `ModbusDeviceMap`.
+
         `unit` y `register_type` se conservan: `ModbusRegister` sólo lee
         address, data_type y gain, así que sobran sin molestar y le sirven a
         quien mire el archivo.
         """
-        return {
-            nombre: variable.model_dump(exclude_none=True)
-            for nombre, variable in device.map.items()
-        }
+        mapa = {}
+        for nombre, variable in device.map.items():
+            datos = variable.model_dump(exclude_none=True)
+            datos[NameParamsModbus.address] = (
+                f"0x{parse_direccion(variable.address):04X}"
+            )
+            mapa[normalizar_nombre(nombre)] = datos
+        return mapa
 
     # --- escritura -------------------------------------------------------
 

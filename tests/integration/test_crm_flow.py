@@ -184,7 +184,7 @@ async def test_del_aviso_mqtt_al_ack(gateway, crm):
 
     # 2. mapa escrito
     mapa = json.loads((gateway.config_applier.maps_dir / "Medidor.json").read_text())
-    assert set(mapa) == {"Voltaje A", "Voltaje B"}
+    assert set(mapa) == {"Voltaje_A", "Voltaje_B"}
 
     # 3. recarga en caliente, sin systemctl
     gateway.modbus_app._load_configs.assert_called()

@@ -218,7 +218,7 @@ def test_la_configuracion_del_crm_deja_el_gateway_cargado(tmp_path, monkeypatch)
     assert list(recargado.device_maps) == ["Medidor"]
 
     mapa = json.loads((tmp_path / "src/Modbus/maps/Medidor.json").read_text())
-    assert list(mapa) == ["Voltaje A"]
+    assert list(mapa) == ["Voltaje_A"]
 
 
 # ---------------------------------------------------------------------------

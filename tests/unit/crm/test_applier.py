@@ -119,10 +119,11 @@ def test_escribe_el_mapa_en_el_formato_del_gateway(applier):
 
     mapa = json.loads((applier.maps_dir / "Modbus_DTUS666.json").read_text())
 
-    assert set(mapa) == {"Voltaje A", "Voltaje B"}
-    assert mapa["Voltaje A"]["address"] == "0x2000"
-    assert mapa["Voltaje A"]["data_type"] == "f"
-    assert mapa["Voltaje A"]["gain"] == "1"
+    # Las claves van sin espacios: acaban siendo fields de InfluxDB
+    assert set(mapa) == {"Voltaje_A", "Voltaje_B"}
+    assert mapa["Voltaje_A"]["address"] == "0x2000"
+    assert mapa["Voltaje_A"]["data_type"] == "f"
+    assert mapa["Voltaje_A"]["gain"] == "1"
 
 
 def test_el_mapa_escrito_lo_entiende_ModbusDeviceMap(applier):
@@ -139,7 +140,94 @@ def test_el_mapa_escrito_lo_entiende_ModbusDeviceMap(applier):
     bloques = device_map.build_read_blocks()
 
     assert bloques, "no se construyó ningún bloque de lectura"
-    assert sorted(device_map.get_variables_list()) == ["Voltaje A", "Voltaje B"]
+    assert sorted(device_map.get_variables_list()) == ["Voltaje_A", "Voltaje_B"]
+
+
+# --------------------------------------------------------------------------
+# Nombres de variable y direcciones
+# --------------------------------------------------------------------------
+
+def _con_variable(nombre: str, **campos) -> dict:
+    """PAYLOAD con una sola variable, para probar su nombre o su dirección."""
+    payload = json.loads(json.dumps(PAYLOAD))
+    variable = {"address": "0x2000", "data_type": "f", "gain": "1",
+                "unit": "V", "register_type": "holding"}
+    variable.update(campos)
+    payload["devices"][0]["map"] = {nombre: variable}
+    return payload
+
+
+@pytest.mark.parametrize(
+    "nombre,clave",
+    [
+        ("Voltaje A", "Voltaje_A"),
+        ("Potencia Activa Ints", "Potencia_Activa_Ints"),
+        ("  Voltaje   A  ", "Voltaje_A"),      # espacios de sobra y repetidos
+        ("Voltaje\tA", "Voltaje_A"),           # tabulador
+        ("VoltajeA", "VoltajeA"),              # sin espacios, intacto
+    ],
+)
+def test_las_claves_del_mapa_van_sin_espacios(applier, nombre, clave):
+    applier.apply(config_desde(_con_variable(nombre)))
+
+    mapa = json.loads((applier.maps_dir / "Modbus_DTUS666.json").read_text())
+    assert list(mapa) == [clave]
+
+
+def test_dos_nombres_que_colisionan_se_rechazan(applier):
+    """'Voltaje A' y 'Voltaje  A' serían la misma clave: perdería una lectura."""
+    payload = _con_variable("Voltaje A")
+    payload["devices"][0]["map"]["Voltaje  A"] = {
+        "address": "0x2002", "data_type": "f", "gain": "1",
+        "unit": "V", "register_type": "holding",
+    }
+
+    with pytest.raises(ConfigInvalida, match="misma variable"):
+        applier.apply(config_desde(payload))
+
+    assert not applier.config_path.exists()
+
+
+@pytest.mark.parametrize(
+    "address,escrito",
+    [
+        ("0x2000", "0x2000"),     # hex explícito, como hasta ahora
+        ("42514", "0xA612"),      # decimal: el CRM lo manda en su propia base
+        ("0", "0x0000"),
+        ("65535", "0xFFFF"),
+    ],
+)
+def test_la_direccion_se_escribe_siempre_en_hexadecimal(applier, address, escrito):
+    """`ModbusDeviceMap` lee el mapa en base 16: un decimal crudo sería otro registro."""
+    applier.apply(config_desde(_con_variable("Voltaje A", address=address)))
+
+    mapa = json.loads((applier.maps_dir / "Modbus_DTUS666.json").read_text())
+    assert mapa["Voltaje_A"]["address"] == escrito
+
+
+def test_el_registro_que_acaba_leyendo_el_gateway_es_el_que_pidio_el_crm(applier):
+    """La prueba de verdad: 42514 decimal se lee como 42514, no como 0x42514."""
+    from src.Modbus.modbusmap import ModbusDeviceMap
+
+    applier.apply(config_desde(_con_variable("Voltaje A", address="42514")))
+
+    device_map = ModbusDeviceMap(
+        device_name="Modbus_DTUS666",
+        map_file_path=str(applier.maps_dir / "Modbus_DTUS666.json"),
+        block_reading=True,
+    )
+    assert device_map.load_map() is True
+    direcciones, _ = device_map.get_read_params()
+
+    assert direcciones == [42514]
+
+
+@pytest.mark.parametrize("address", ["70000", "0x1FFFF", "-1", "", "  ", "ZZZZ"])
+def test_direccion_fuera_de_rango_o_ilegible_no_escribe_nada(applier, address):
+    with pytest.raises(ConfigInvalida):
+        applier.apply(config_desde(_con_variable("Voltaje A", address=address)))
+
+    assert not applier.config_path.exists()
 
 
 def test_conserva_las_claves_de_DEFAULT_que_el_crm_no_manda(applier):
@@ -173,7 +261,7 @@ def test_ignora_campos_que_el_gateway_no_conoce(applier):
     applier.apply(config_desde(payload))
 
     mapa = json.loads((applier.maps_dir / "Modbus_DTUS666.json").read_text())
-    assert "escala_nueva" not in mapa["Voltaje A"]
+    assert "escala_nueva" not in mapa["Voltaje_A"]
 
 
 def test_dispositivo_tcp(applier):
