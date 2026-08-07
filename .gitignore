@@ -134,5 +134,11 @@ src/Config/config.ini
 # Estado de la configuración remota del CRM (por equipo)
 src/Config/remote/
 
+# Marca de agua de la réplica al servidor central (por equipo)
+src/Database/remote/
+
+# Progreso de la migración del histórico (por equipo)
+scripts/.backfill_state.json
+
 
 /docs

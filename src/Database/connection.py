@@ -33,6 +33,23 @@ class InfluxDBConnection:
     _retry_backoff: int = 2
     _timeout: int = 10
 
+    @classmethod
+    def remota(cls) -> "InfluxDBConnection":
+        """
+        Conexión al InfluxDB central, con las credenciales INFLUXDB_SERVER_*.
+
+        Misma clase y misma lógica de reintentos que la local: lo único que
+        cambia son los valores. `Settings` ya garantiza que están completos
+        cuando INFLUXDB_SERVER_ACTIVE está encendido.
+        """
+        return cls(
+            _token=settings.INFLUXDB_SERVER_TOKEN,
+            org=settings.INFLUXDB_SERVER_ORG,
+            bucket=settings.INFLUXDB_SERVER_BUCKET,
+            _retention=settings.INFLUXDB_RETENTION,
+            _url=settings.INFLUXDB_SERVER_URL,
+        )
+
     def _build_client(self) -> InfluxDBClientAsync:
         """
         Crea el cliente async. Debe hacerse con el event loop en marcha
@@ -135,6 +152,15 @@ class InfluxDBConnection:
     def get_write_api(self) -> Optional[WriteApiAsync]:
         """Retorna el write API"""
         return self._write_api
+
+    def get_query_api(self):
+        """
+        Retorna el query API.
+
+        No se guarda como el de escritura porque no hace falta: `query_api()`
+        del cliente async no abre nada, sólo envuelve al cliente.
+        """
+        return self._client.query_api() if self._client else None
 
     async def ensure_connected(self) -> bool:
         """

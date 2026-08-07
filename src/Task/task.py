@@ -9,6 +9,7 @@ from src.Utils.utils import QueueManager, MQTTManager
 from src.Core.watchdog import BaseWatchdog
 from src.Models.model import CrmConfigEvent, CrmEvent, NameParamsModbus
 from src.Database.service import ModbusService
+from src.Database.replicator import ServerReplicator
 from src.Core.config import settings
 from src.Crm.client import CrmAuthError, CrmClient, CrmError
 from src.Crm.applier import ConfigApplier, ConfigInvalida
@@ -27,7 +28,10 @@ class TaskManager(BaseWatchdog):
     
     mqtt_manager: Optional[MQTTManager] = field(init=False, default=None)
     
-    modbus_service: Optional[ModbusService] = field(init=False, default=None) 
+    modbus_service: Optional[ModbusService] = field(init=False, default=None)
+
+    # Sólo existe si INFLUXDB_SERVER_ACTIVE está encendido.
+    replicator: Optional[ServerReplicator] = field(init=False, default=None)
 
     connect: str = field(init=False, default="modbusconnect")
     readstart: str = field(init=False, default="modbusread")
@@ -156,24 +160,51 @@ class TaskManager(BaseWatchdog):
             # Registrar los suscriptores ANTES de que empiece a publicarse:
             # publish() sólo entrega a las colas ya registradas.
             self.queue_manager.subscribe(self.sub_influx)
-            self.queue_manager.subscribe(self.sub_mqtt)
             self.fetch_queue.subscribe(self.sub_worker)
             self.apply_queue.subscribe(self.sub_worker)
 
-            self.mqtt_manager = MQTTManager()
-            await self.mqtt_manager.connect()
+            if settings.MQTT_ACTIVE:
+                # El suscriptor de MQTT se registra sólo si alguien va a
+                # consumirlo. Una cola sin consumidor se llena hasta el tope y
+                # a partir de ahí descarta un lote (y avisa por log) en cada
+                # lectura, para nada.
+                self.queue_manager.subscribe(self.sub_mqtt)
 
-            # Plano de control del CRM: la suscripción se registra siempre,
-            # y se reaplica sola si el broker se cae.
-            self.crm_client = CrmClient()
-            await self.mqtt_manager.subscribe(settings.MQTT_TOPIC_CONFIG)
-            self.mqtt_manager.on_message(
-                settings.MQTT_TOPIC_CONFIG, self._on_crm_event
-            )
+                self.mqtt_manager = MQTTManager()
+                await self.mqtt_manager.connect()
+
+                # Plano de control del CRM: la suscripción se registra siempre,
+                # y se reaplica sola si el broker se cae.
+                self.crm_client = CrmClient()
+                await self.mqtt_manager.subscribe(settings.MQTT_TOPIC_CONFIG)
+                self.mqtt_manager.on_message(
+                    settings.MQTT_TOPIC_CONFIG, self._on_crm_event
+                )
+            else:
+                # Modo autónomo: leer y guardar en local, nada más. Ni broker
+                # ni CRM, así que este gateway se configura únicamente por su
+                # config.ini hasta que se vuelva a encender MQTT_ACTIVE.
+                logger.info(
+                    "🔕 MQTT_ACTIVE=false: modo autónomo. Sin publicación, sin "
+                    "CRM y sin heartbeat; la configuración sale sólo de config.ini"
+                )
+
             self.modbus_app = ModbusApp(self.config)
             
             self.modbus_service = ModbusService()
             await self.modbus_service.initialize()
+
+            if settings.INFLUXDB_SERVER_ACTIVE:
+                # Comparte el cliente local ya conectado; el del servidor se
+                # conecta dentro de la tarea, para que un central caído no
+                # impida arrancar.
+                self.replicator = ServerReplicator(
+                    _local=self.modbus_service.repository
+                )
+                logger.info(
+                    "🌐 Réplica al servidor central activa "
+                    f"(cada {settings.INFLUXDB_SERVER_INTERVAL_MINUTES} min)"
+                )
 
             if not self.modbus_app._load_configs():
                 logger.error("❌ No se pudo cargar configs")
@@ -366,6 +397,33 @@ class TaskManager(BaseWatchdog):
 
         except asyncio.CancelledError:
             logger.info("⏹️ Tarea de publicación MQTT cancelada")
+
+    async def task_replicar_servidor(self):
+        """
+        Sube al servidor central lo que ya está guardado en el InfluxDB local.
+
+        Duerme primero: al arrancar no hay nada nuevo que no estuviera ya en la
+        ventana anterior, y así el primer ciclo no cae encima del arranque.
+        """
+        intervalo = settings.INFLUXDB_SERVER_INTERVAL_MINUTES * 60
+        logger.info(
+            f"🌐 Tarea de réplica al servidor iniciada "
+            f"(cada {settings.INFLUXDB_SERVER_INTERVAL_MINUTES} min)"
+        )
+        try:
+            while self._running:
+                await asyncio.sleep(intervalo)
+
+                try:
+                    await self.replicator.run_once()
+                except Exception as e:
+                    # La marca de agua no se movió, así que el ciclo siguiente
+                    # reintenta el mismo tramo: no se pierde nada.
+                    logger.error(f"❌ Réplica al servidor fallida: {e}")
+                    self.replicator.marcar_desconectado()
+
+        except asyncio.CancelledError:
+            logger.info("⏹️ Tarea de réplica al servidor cancelada")
 
     # ==================================================================
     # Plano de control: configuración remota desde el CRM
@@ -610,20 +668,30 @@ class TaskManager(BaseWatchdog):
                 name="read_modbus"
             ),
             asyncio.create_task(
-                self.task_process_queue(), 
+                self.task_process_queue(),
                 name="process_queue"
             ),
-            asyncio.create_task(
-                self.task_publish_mqtt(),
-                name="publish_mqtt"
-            ),
         ]
+
+        # Independiente de MQTT: va por HTTP contra InfluxDB, así que un
+        # gateway en modo autónomo también puede subir al servidor central.
+        if self.replicator:
+            self._tasks.append(
+                asyncio.create_task(
+                    self.task_replicar_servidor(),
+                    name="replicar_servidor"
+                )
+            )
 
         # El plano de control sólo arranca si sus piezas existen: sin MQTT ni
         # cliente del CRM, el gateway sigue leyendo y guardando con la
         # configuración local, que es lo que no puede dejar de funcionar.
         if self.mqtt_manager and self.crm_client:
             self._tasks += [
+                asyncio.create_task(
+                    self.task_publish_mqtt(),
+                    name="publish_mqtt"
+                ),
                 asyncio.create_task(
                     self.mqtt_manager.listen(),
                     name="listen_mqtt"
@@ -641,6 +709,11 @@ class TaskManager(BaseWatchdog):
                     name="heartbeat"
                 ),
             ]
+        elif not settings.MQTT_ACTIVE:
+            # Apagado a propósito: no es una avería, no se avisa como tal.
+            logger.info(
+                "🔕 Modo autónomo: sólo lectura Modbus y guardado local"
+            )
         else:
             logger.warning(
                 "⚠️ Sin MQTT o sin cliente del CRM: el gateway funciona con la "
@@ -663,6 +736,12 @@ class TaskManager(BaseWatchdog):
             if not task.done():
                 task.cancel()
                 
+        if self.replicator:
+            try:
+                await self.replicator.shutdown()
+            except Exception as e:
+                logger.error(f"❌ Error cerrando la réplica al servidor: {e}")
+
         if self.modbus_service:
             try:
                 await self.modbus_service.shutdown()

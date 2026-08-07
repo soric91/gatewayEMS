@@ -470,34 +470,36 @@ async def test_task_process_queue_consumes_data(task_manager):
 
 @pytest.mark.asyncio
 async def test_start_all_tasks_creates_tasks(task_manager):
-    """✅ start_all_tasks creates and starts all background tasks"""
+    """✅ start_all_tasks arranca las tareas que no dependen del broker.
+
+    El fixture no tiene `mqtt_manager` ni `crm_client`, así que sólo deben
+    salir las dos locales. `publish_mqtt` está ahora dentro del guard de MQTT:
+    sin cliente sólo podía dar vueltas registrando que no puede publicar.
+    """
     task_manager._running = False
     task_manager.modbus_app = MagicMock()  # Need modbus_app for the task
-    
+
     # Patch the task methods to avoid actual long-running execution
     with patch.object(task_manager, 'task_read_modbus_periodic', new_callable=AsyncMock) as mock_read, \
-         patch.object(task_manager, 'task_process_queue', new_callable=AsyncMock) as mock_queue, \
-         patch.object(task_manager, 'task_publish_mqtt', new_callable=AsyncMock) as mock_mqtt:
-        
+         patch.object(task_manager, 'task_process_queue', new_callable=AsyncMock) as mock_queue:
+
         # Make the mocked tasks wait briefly then complete
         async def quick_task():
             await asyncio.sleep(0.1)
-        
+
         mock_read.side_effect = quick_task
         mock_queue.side_effect = quick_task
-        mock_mqtt.side_effect = quick_task
-        
+
         # Start tasks
         start_task = asyncio.create_task(task_manager.start_all_tasks())
         await asyncio.sleep(0.05)  # Give time for tasks to be created
-        
+
         # Verify tasks were created
         assert task_manager._running is True
-        assert len(task_manager._tasks) == 3
-        assert any(t.get_name() == "read_modbus" for t in task_manager._tasks)
-        assert any(t.get_name() == "process_queue" for t in task_manager._tasks)
-        assert any(t.get_name() == "publish_mqtt" for t in task_manager._tasks)
-        
+        assert {t.get_name() for t in task_manager._tasks} == {
+            "read_modbus", "process_queue"
+        }
+
         # Stop and clean up
         task_manager._running = False
         for t in task_manager._tasks:

@@ -22,7 +22,18 @@ class ModbusService:
     
     _repository: InfluxDBRepository = field(default_factory=InfluxDBRepository)
     _initialized: bool = field(default=False, init=False)
-    
+
+    @property
+    def repository(self) -> InfluxDBRepository:
+        """
+        El repositorio local, para quien necesite releer lo ya guardado.
+
+        Lo usa la réplica al servidor central: comparte este cliente en vez de
+        abrir un segundo contra el mismo InfluxDB.
+        """
+        return self._repository
+
+
     async def initialize(self) -> None:
         """
         Inicializa el servicio.

@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import ssl
 from dataclasses import dataclass, is_dataclass, asdict
 from src.Utils.logging import get_logger
 from src.Core.config import settings
@@ -106,6 +107,31 @@ class MQTTManager:
         self._handlers: list[tuple[str, Callable[[str, Any], Any]]] = []
 
 
+    @staticmethod
+    def _build_tls_params() -> Optional[aiomqtt.TLSParameters]:
+        """
+        Parámetros TLS del cliente, o None para hablar en claro.
+
+        `PROTOCOL_TLS_CLIENT` y no `PROTOCOL_TLS`: el primero enciende
+        `check_hostname` y `CERT_REQUIRED` de fábrica; el segundo crea un
+        contexto genérico con la validación de nombre APAGADA, y paho sólo la
+        fuerza cuando se pide `CERT_NONE`. Sin `check_hostname` se valida que la
+        cadena del certificado sea buena, pero no que el certificado sea el de
+        NUESTRO broker: cualquiera que pueda desviar el tráfico y traiga un
+        certificado válido de un dominio suyo entra sin que nadie se queje.
+
+        Sin `ca_certs` se usa el almacén de confianza del sistema, que es lo
+        correcto para un certificado emitido por una CA pública. Con una CA
+        propia hay que instalarla en el sistema o añadir aquí `ca_certs`.
+        """
+        if not settings.MQTT_USE_TLS:
+            return None
+
+        return aiomqtt.TLSParameters(
+            cert_reqs=ssl.CERT_REQUIRED,
+            tls_version=ssl.PROTOCOL_TLS_CLIENT,
+        )
+
     async def connect(self):
         try:
             self._client = aiomqtt.Client(
@@ -113,7 +139,8 @@ class MQTTManager:
                 port=settings.MQTT_PORT,
                 username=settings.MQTT_USER,
                 password=settings.MQTT_PASSWORD,
-                identifier=settings.MQTT_CLIENT_ID
+                identifier=settings.MQTT_CLIENT_ID,
+                tls_params=self._build_tls_params(),
             )
             await self._client.__aenter__()
             logger.info("Connected to MQTT broker")
