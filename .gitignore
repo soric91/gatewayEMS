@@ -107,8 +107,14 @@ temp/
 # ============================================
 # Scripts privados (comentar si quieres incluirlos)
 # ============================================
-scripts/
-/scripts/
+# El contenido, no el directorio: git no puede reincluir un archivo si su
+# directorio padre está excluido, y abajo hay una excepción.
+/scripts/*
+
+# Este sí se versiona: es lo que se ejecuta en un equipo recién clonado, antes
+# de que exista un `.env` completo. Ignorarlo dejaría al gateway sin la forma
+# de generar sus propios valores.
+!/scripts/generate_device_env.py
 
 # ============================================
 # Sistema Operativo
@@ -137,8 +143,5 @@ src/Config/remote/
 # Marca de agua de la réplica al servidor central (por equipo)
 src/Database/remote/
 
-# Progreso de la migración del histórico (por equipo)
-scripts/.backfill_state.json
-
-
-/docs
+# `assets/` sí se versiona: son los diagramas del README (.png y .excalidraw).
+# Sin ellos el README se ve con los huecos de las imágenes.
