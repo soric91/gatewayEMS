@@ -1,0 +1,36 @@
+name: Publicar release
+
+# Solo con un tag que empiece con v. Un push a main no publica nada: si cada
+# commit cambiara el paquete, dos equipos instalados el mismo día recibirían
+# código distinto y no quedaría registro de cuál recibió cada uno.
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Empaquetar y calcular el checksum
+        run: |
+          V="${GITHUB_REF_NAME}"
+          tar --exclude-vcs --exclude='.github' -czf "gatewayEMS-$V.tar.gz" .
+          sha256sum "gatewayEMS-$V.tar.gz" | cut -d' ' -f1 > "gatewayEMS-$V.tar.gz.sha256"
+          echo "checksum de $V:"
+          cat "gatewayEMS-$V.tar.gz.sha256"
+
+      - name: Preparar SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Subir al servidor
+        run: |
+          # --ignore-existing: una versión publicada nunca se sobrescribe. Un
+          # equipo que se reinstala meses después recibe los mismos bytes.
+          rsync --ignore-existing -av gatewayEMS-*.tar.gz* \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:rel/"
