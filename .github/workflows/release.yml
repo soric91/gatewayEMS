@@ -16,7 +16,12 @@ jobs:
       - name: Empaquetar y calcular el checksum
         run: |
           V="${GITHUB_REF_NAME}"
-          tar --exclude-vcs --exclude='.github' -czf "gatewayEMS-$V.tar.gz" .
+          # El paquete se arma FUERA del directorio que se está empaquetando.
+          # Escribirlo adentro hace que tar lea un archivo que crece mientras
+          # lo lee, y falla con "file changed as we read it".
+          mkdir -p /tmp/dist
+          tar --exclude-vcs --exclude='.github' -czf "/tmp/dist/gatewayEMS-$V.tar.gz" .
+          cd /tmp/dist
           sha256sum "gatewayEMS-$V.tar.gz" | cut -d' ' -f1 > "gatewayEMS-$V.tar.gz.sha256"
           echo "checksum de $V:"
           cat "gatewayEMS-$V.tar.gz.sha256"
@@ -32,5 +37,5 @@ jobs:
         run: |
           # --ignore-existing: una versión publicada nunca se sobrescribe. Un
           # equipo que se reinstala meses después recibe los mismos bytes.
-          rsync --ignore-existing -av gatewayEMS-*.tar.gz* \
+          rsync --ignore-existing -av /tmp/dist/gatewayEMS-*.tar.gz* \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:rel/"
